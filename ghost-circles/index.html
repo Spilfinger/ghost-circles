@@ -44,6 +44,7 @@
     }
 
     #debug-log {
+      display: none; /* shown only when ?debug=true — see JS below */
       position: fixed;
       top: 12px;
       left: 12px;
@@ -85,7 +86,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v1.8t</div>
+  <div id="version">v2.0</div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
@@ -123,8 +124,8 @@
         name:       'lindevej-a',
         lat:        55.9933,
         lng:        12.5500,
-        radius:     25,
-        priority:   60,
+        radius:     50,
+        priority:   50,
         whisper:    'audio/trigger.m4a',
         conditions: [],
       },
@@ -136,15 +137,6 @@
         priority:   50,
         whisper:    'audio/youfoundit.m4a',
         conditions: [{ type: 'visited', circle: 'lindevej-a', minTimes: 1 }],
-      },
-      {
-        name:       'lindevej-overlap',
-        lat:        55.9934,
-        lng:        12.5505,
-        radius:     25,
-        priority:   40,
-        whisper:    'audio/overlap.m4a',
-        conditions: [],
       },
     ];
 
@@ -192,7 +184,12 @@
     }
 
     // --- Debug log ---
-    const debugEl = document.getElementById('debug-log');
+    // Visible only when the URL contains ?debug=true. All logging runs regardless;
+    // it just writes to a hidden element in production.
+    const debugEl   = document.getElementById('debug-log');
+    const DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === 'true';
+    if (DEBUG_MODE) debugEl.style.display = 'block';
+
     const debugLines = [];
 
     function debugLog(msg) {

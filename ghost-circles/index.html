@@ -85,7 +85,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v1.7</div>
+  <div id="version">v1.8t</div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
@@ -124,6 +124,7 @@
         lat:        55.9933,
         lng:        12.5500,
         radius:     50,
+        priority:   60,
         whisper:    'audio/trigger.m4a',
         conditions: [],
       },
@@ -132,15 +133,26 @@
         lat:        55.9942,
         lng:        12.5503,
         radius:     30,
+        priority:   50,
         whisper:    'audio/youfoundit.m4a',
         conditions: [{ type: 'visited', circle: 'lindevej-a', minTimes: 1 }],
+      },
+      {
+        name:       'lindevej-overlap',
+        lat:        55.9933,
+        lng:        12.5505,
+        radius:     40,
+        priority:   40,
+        whisper:    'audio/overlap.m4a',
+        conditions: [],
       },
     ];
 
     // --- Build runtime state and Leaflet circles ---
-    // circleRuntime[name] = { def, leafletCircle, state, visited }
-    // state: 'locked' | 'passive' | 'active'
-    // visited: number of times the player has entered this circle (passive → active transitions)
+    // circleRuntime[name] = { def, leafletCircle, state, inRange, visited }
+    // state:   'locked' | 'passive' | 'active'
+    // inRange: true when the player is physically within the circle's radius
+    // visited: number of times the circle has transitioned passive → active
     const circleRuntime = {};
 
     CIRCLE_DEFS.forEach(def => {
@@ -155,7 +167,7 @@
         weight:      2,
       }).addTo(map);
 
-      circleRuntime[def.name] = { def, leafletCircle, state, visited: 0 };
+      circleRuntime[def.name] = { def, leafletCircle, state, inRange: false, visited: 0 };
     });
 
     // Returns true if all conditions for a circle definition are satisfied.
@@ -305,26 +317,46 @@
     function checkProximity(latitude, longitude) {
       const userLatLng = L.latLng(latitude, longitude);
 
+      // Pass 1: update inRange for every non-locked circle.
       CIRCLE_DEFS.forEach(def => {
-        const rt      = circleRuntime[def.name];
-        const inRange = userLatLng.distanceTo(L.latLng(def.lat, def.lng)) <= def.radius;
+        const rt = circleRuntime[def.name];
+        if (rt.state === 'locked') return;
+        rt.inRange = userLatLng.distanceTo(L.latLng(def.lat, def.lng)) <= def.radius;
+      });
 
-        // Locked circles are invisible to the player — skip entirely
+      // Pass 2: find the highest priority among circles the player is physically inside.
+      // Locked circles are excluded. Ties keep all tied circles active simultaneously.
+      let maxPriority = -Infinity;
+      CIRCLE_DEFS.forEach(def => {
+        const rt = circleRuntime[def.name];
+        if (rt.state !== 'locked' && rt.inRange) {
+          maxPriority = Math.max(maxPriority, def.priority ?? 50);
+        }
+      });
+
+      // Pass 3: resolve each circle's desired state and fire transitions.
+      CIRCLE_DEFS.forEach(def => {
+        const rt          = circleRuntime[def.name];
         if (rt.state === 'locked') return;
 
-        if (inRange && rt.state === 'passive') {
-          // passive → active
+        const priority      = def.priority ?? 50;
+        const shouldBeActive = rt.inRange && priority >= maxPriority;
+        const wasActive      = rt.state === 'active';
+
+        if (shouldBeActive && !wasActive) {
+          // → active: player entered this circle and it holds the highest priority
           rt.state = 'active';
           rt.visited += 1;
           rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
           if (navigator.vibrate) navigator.vibrate(200);
           playWhisper(def.whisper);
           checkUnlocks();
-        } else if (!inRange && rt.state === 'active') {
-          // active → passive
+        } else if (!shouldBeActive && wasActive) {
+          // → passive: either the player physically exited, or a higher-priority circle
+          //   became active (priority demotion). Only vibrate on physical exit.
           rt.state = 'passive';
           rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
-          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+          if (!rt.inRange && navigator.vibrate) navigator.vibrate([200, 100, 200]);
         }
       });
     }

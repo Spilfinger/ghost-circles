@@ -43,7 +43,24 @@
       white-space: nowrap;
     }
 
-#start-overlay {
+    #debug-log {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      background: rgba(0, 0, 0, 0.75);
+      color: #fff;
+      font-family: monospace;
+      font-size: 10px;
+      line-height: 1.5;
+      padding: 8px 10px;
+      border-radius: 10px;
+      z-index: 1000;
+      max-width: 220px;
+      pointer-events: none;
+      white-space: pre-wrap;
+    }
+
+    #start-overlay {
       position: fixed;
       inset: 0;
       background: #000;
@@ -68,7 +85,8 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v1.5</div>
+  <div id="version">v1.6</div>
+  <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
     <span>Tap to Start</span>
@@ -161,6 +179,23 @@
       });
     }
 
+    // --- Debug log ---
+    const debugEl = document.getElementById('debug-log');
+    const debugLines = [];
+
+    function debugLog(msg) {
+      const now = new Date();
+      const ts  = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+      debugLines.unshift(`${ts} ${msg}`);
+      if (debugLines.length > 8) debugLines.pop();
+      renderDebug();
+    }
+
+    function renderDebug() {
+      const state = audioCtx ? audioCtx.state : '—';
+      debugEl.textContent = `audio: ${state}\n${debugLines.join('\n')}`;
+    }
+
     // --- Whisper audio (Web Audio API — required for reliable iOS Safari playback) ---
     let audioCtx = null;
     const whisperBuffers = {}; // keyed by file path
@@ -168,10 +203,12 @@
     async function initAudio() {
       // AudioContext must be created inside a user gesture on iOS
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      debugLog(`ctx created: ${audioCtx.state}`);
 
       // iOS suspends AudioContext immediately after creation — resume inside the gesture
       if (audioCtx.state === 'suspended') {
         await audioCtx.resume();
+        debugLog(`ctx resumed: ${audioCtx.state}`);
       }
 
       // Pre-load every unique whisper file referenced by any circle
@@ -182,16 +219,20 @@
         const arrayBuffer = await response.arrayBuffer();
         whisperBuffers[file] = await audioCtx.decodeAudioData(arrayBuffer);
       }));
+      debugLog(`buffers loaded: ${files.length}`);
+      renderDebug();
     }
 
     function playWhisper(file) {
       const buffer = whisperBuffers[file];
       if (!audioCtx || !buffer) return;
+      debugLog(`play: ${file.split('/').pop()} (ctx:${audioCtx.state})`);
       const source = audioCtx.createBufferSource();
       source.buffer = buffer;
       source.loop = false;
       source.connect(audioCtx.destination);
       source.start(0);
+      renderDebug();
     }
 
     // --- Screen Wake Lock ---
@@ -215,10 +256,18 @@
     // When the page becomes visible again after backgrounding or screen-off:
     // reacquire the wake lock and resume the AudioContext (iOS suspends it on screen lock).
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
+      const vis = document.visibilityState;
+      debugLog(`visibility: ${vis}`);
+      if (vis === 'visible') {
         if (wakeLock === null) requestWakeLock();
-        if (audioCtx) audioCtx.resume().catch(() => {});
+        if (audioCtx) {
+          debugLog(`resume called (was:${audioCtx.state})`);
+          audioCtx.resume()
+            .then(() => debugLog(`resume ok: ${audioCtx.state}`))
+            .catch(err => debugLog(`resume ERR: ${err.message}`));
+        }
       }
+      renderDebug();
     });
 
     // --- Tap to start: unlock audio + begin GPS + wake lock ---

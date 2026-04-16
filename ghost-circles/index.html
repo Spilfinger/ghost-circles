@@ -85,7 +85,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v1.6</div>
+  <div id="version">v1.7</div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
@@ -254,11 +254,14 @@
     }
 
     // When the page becomes visible again after backgrounding or screen-off:
-    // reacquire the wake lock and resume the AudioContext (iOS suspends it on screen lock).
+    // aggressively restart GPS, reacquire the wake lock, and resume the AudioContext.
     document.addEventListener('visibilitychange', () => {
       const vis = document.visibilityState;
       debugLog(`visibility: ${vis}`);
       if (vis === 'visible') {
+        // Always restart the GPS watcher — don't trust the existing one to resume
+        debugLog('gps restart');
+        startTracking();
         if (wakeLock === null) requestWakeLock();
         if (audioCtx) {
           debugLog(`resume called (was:${audioCtx.state})`);
@@ -282,9 +285,22 @@
     });
 
     // --- GPS tracking ---
-    let playerMarker = null;
-    let watchId      = null;
+    let playerMarker  = null;
+    let watchId       = null;
     let gpsRetryTimer = null;
+    let lastFixTime   = null;
+
+    const GPS_STALE_MS = 10000; // grey out the dot after 10 s without a fix
+
+    // Poll every 2 s and update the marker colour to reflect GPS freshness
+    setInterval(() => {
+      if (!playerMarker) return;
+      const stale = lastFixTime === null || (Date.now() - lastFixTime) > GPS_STALE_MS;
+      playerMarker.setStyle(stale
+        ? { color: '#757575', fillColor: '#bdbdbd' }   // grey — stale
+        : { color: '#1565C0', fillColor: '#42A5F5' }   // blue — fresh
+      );
+    }, 2000);
 
     function checkProximity(latitude, longitude) {
       const userLatLng = L.latLng(latitude, longitude);
@@ -315,6 +331,7 @@
 
     function onPosition(pos) {
       const { latitude, longitude } = pos.coords;
+      lastFixTime = Date.now();
 
       if (!playerMarker) {
         // First fix — create marker and pan to it

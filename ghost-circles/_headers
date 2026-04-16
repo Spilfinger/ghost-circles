@@ -1,0 +1,10 @@
+# Never cache the service worker or HTML — browsers must always fetch these fresh
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Correct MIME type for .m4a audio files — required for Web Audio API on iOS Safari
+/audio/*.m4a
+  Content-Type: audio/mp4

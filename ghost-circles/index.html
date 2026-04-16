@@ -86,7 +86,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v2.0</div>
+  <div id="version">v2.1</div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
@@ -126,6 +126,7 @@
         lng:        12.5500,
         radius:     50,
         priority:   50,
+        visible:    false,
         whisper:    'audio/trigger.m4a',
         conditions: [],
       },
@@ -135,31 +136,38 @@
         lng:        12.5503,
         radius:     30,
         priority:   50,
+        visible:    false,
         whisper:    'audio/youfoundit.m4a',
         conditions: [{ type: 'visited', circle: 'lindevej-a', minTimes: 1 }],
       },
     ];
 
     // --- Build runtime state and Leaflet circles ---
-    // circleRuntime[name] = { def, leafletCircle, state, inRange, visited }
+    // circleRuntime[name] = { def, leafletCircle, state, inRange, visited, onMap }
     // state:   'locked' | 'passive' | 'active'
     // inRange: true when the player is physically within the circle's radius
     // visited: number of times the circle has transitioned passive → active
+    // onMap:   true when the Leaflet circle has been added to the map (i.e. visible)
     const circleRuntime = {};
 
     CIRCLE_DEFS.forEach(def => {
       const state = def.conditions.length === 0 ? 'passive' : 'locked';
       const color = state === 'locked' ? COLOR_LOCKED : COLOR_PASSIVE;
 
+      // Always create the Leaflet circle object so state transitions work normally,
+      // but only add it to the map if visible: true (default true if omitted).
       const leafletCircle = L.circle([def.lat, def.lng], {
         radius:      def.radius,
         color:       color,
         fillColor:   color,
         fillOpacity: 0.15,
         weight:      2,
-      }).addTo(map);
+      });
 
-      circleRuntime[def.name] = { def, leafletCircle, state, inRange: false, visited: 0 };
+      const onMap = def.visible !== false;
+      if (onMap) leafletCircle.addTo(map);
+
+      circleRuntime[def.name] = { def, leafletCircle, state, inRange: false, visited: 0, onMap };
     });
 
     // Returns true if all conditions for a circle definition are satisfied.
@@ -173,12 +181,17 @@
     }
 
     // Re-evaluate all locked circles and unlock any whose conditions are now met.
+    // Unlocking also makes the circle visible on the map if it wasn't already.
     function checkUnlocks() {
       CIRCLE_DEFS.forEach(def => {
         const rt = circleRuntime[def.name];
         if (rt.state === 'locked' && evaluateConditions(def)) {
           rt.state = 'passive';
           rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
+          if (!rt.onMap) {
+            rt.leafletCircle.addTo(map);
+            rt.onMap = true;
+          }
         }
       });
     }

@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#000000" />
+  <title>Ghost Circles</title>
+  <link rel="manifest" href="manifest.json" />
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    #version {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      background: rgba(0, 0, 0, 0.65);
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 20px;
+      pointer-events: none;
+      z-index: 1000;
+      white-space: nowrap;
+    }
+
+    #debug-log {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      background: rgba(0, 0, 0, 0.75);
+      color: #fff;
+      font-family: monospace;
+      font-size: 10px;
+      line-height: 1.5;
+      padding: 8px 10px;
+      border-radius: 10px;
+      z-index: 1000;
+      max-width: 220px;
+      pointer-events: none;
+      white-space: pre-wrap;
+    }
+
+    #start-overlay {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      cursor: pointer;
+    }
+
+    #start-overlay span {
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="map"></div>
+  <div id="version">v1.7</div>
+  <div id="debug-log">audio: —</div>
+  <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
+  <div id="start-overlay">
+    <span>Tap to Start</span>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    // --- Map setup ---
+    const map = L.map('map', {
+      zoomControl: true,
+      attributionControl: true
+    }).setView([55.9937, 12.5501], 16);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // --- Circle colours ---
+    const COLOR_LOCKED  = '#9e9e9e';  // grey  — locked, conditions not yet met
+    const COLOR_PASSIVE = '#e53935';  // red   — unlocked, player is outside
+    const COLOR_ACTIVE  = '#2e7d32';  // green — player is currently inside
+
+    // --- Circle definitions ---
+    // conditions: array of condition objects that must all be true for this circle to unlock.
+    // An empty array means the circle is passive (unlocked) from the start.
+    // Supported condition type:
+    //   { type: "visited", circle: <name>, minTimes: <n> }
+    //   — true when the named circle has been visited at least n times.
+    const CIRCLE_DEFS = [
+      {
+        name:       'lindevej-a',
+        lat:        55.9933,
+        lng:        12.5500,
+        radius:     50,
+        whisper:    'audio/trigger.m4a',
+        conditions: [],
+      },
+      {
+        name:       'lindevej-b',
+        lat:        55.9942,
+        lng:        12.5503,
+        radius:     30,
+        whisper:    'audio/youfoundit.m4a',
+        conditions: [{ type: 'visited', circle: 'lindevej-a', minTimes: 1 }],
+      },
+    ];
+
+    // --- Build runtime state and Leaflet circles ---
+    // circleRuntime[name] = { def, leafletCircle, state, visited }
+    // state: 'locked' | 'passive' | 'active'
+    // visited: number of times the player has entered this circle (passive → active transitions)
+    const circleRuntime = {};
+
+    CIRCLE_DEFS.forEach(def => {
+      const state = def.conditions.length === 0 ? 'passive' : 'locked';
+      const color = state === 'locked' ? COLOR_LOCKED : COLOR_PASSIVE;
+
+      const leafletCircle = L.circle([def.lat, def.lng], {
+        radius:      def.radius,
+        color:       color,
+        fillColor:   color,
+        fillOpacity: 0.15,
+        weight:      2,
+      }).addTo(map);
+
+      circleRuntime[def.name] = { def, leafletCircle, state, visited: 0 };
+    });
+
+    // Returns true if all conditions for a circle definition are satisfied.
+    function evaluateConditions(def) {
+      return def.conditions.every(cond => {
+        if (cond.type === 'visited') {
+          return (circleRuntime[cond.circle]?.visited ?? 0) >= cond.minTimes;
+        }
+        return false;
+      });
+    }
+
+    // Re-evaluate all locked circles and unlock any whose conditions are now met.
+    function checkUnlocks() {
+      CIRCLE_DEFS.forEach(def => {
+        const rt = circleRuntime[def.name];
+        if (rt.state === 'locked' && evaluateConditions(def)) {
+          rt.state = 'passive';
+          rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
+        }
+      });
+    }
+
+    // --- Debug log ---
+    const debugEl = document.getElementById('debug-log');
+    const debugLines = [];
+
+    function debugLog(msg) {
+      const now = new Date();
+      const ts  = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+      debugLines.unshift(`${ts} ${msg}`);
+      if (debugLines.length > 8) debugLines.pop();
+      renderDebug();
+    }
+
+    function renderDebug() {
+      const state = audioCtx ? audioCtx.state : '—';
+      debugEl.textContent = `audio: ${state}\n${debugLines.join('\n')}`;
+    }
+
+    // --- Whisper audio (Web Audio API — required for reliable iOS Safari playback) ---
+    let audioCtx = null;
+    const whisperBuffers = {}; // keyed by file path
+
+    async function initAudio() {
+      // AudioContext must be created inside a user gesture on iOS
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      debugLog(`ctx created: ${audioCtx.state}`);
+
+      // iOS suspends AudioContext immediately after creation — resume inside the gesture
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+        debugLog(`ctx resumed: ${audioCtx.state}`);
+      }
+
+      // Pre-load every unique whisper file referenced by any circle
+      const files = [...new Set(CIRCLE_DEFS.map(d => d.whisper))];
+      await Promise.all(files.map(async file => {
+        const response = await fetch(file);
+        if (!response.ok) throw new Error(`HTTP ${response.status} fetching ${file}`);
+        const arrayBuffer = await response.arrayBuffer();
+        whisperBuffers[file] = await audioCtx.decodeAudioData(arrayBuffer);
+      }));
+      debugLog(`buffers loaded: ${files.length}`);
+      renderDebug();
+    }
+
+    function playWhisper(file) {
+      const buffer = whisperBuffers[file];
+      if (!audioCtx || !buffer) return;
+      debugLog(`play: ${file.split('/').pop()} (ctx:${audioCtx.state})`);
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = false;
+      source.connect(audioCtx.destination);
+      source.start(0);
+      renderDebug();
+    }
+
+    // --- Screen Wake Lock ---
+    // Keeps the screen on while the app is active.
+    // Reacquires automatically if the lock is released (e.g. user manually locks screen then returns).
+    let wakeLock = null;
+
+    async function requestWakeLock() {
+      if (!('wakeLock' in navigator)) return;
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => {
+          // The lock was released — reacquire if the page is still visible
+          if (document.visibilityState === 'visible') requestWakeLock();
+        });
+      } catch (err) {
+        // Wake lock unavailable or denied — not critical, continue without it
+      }
+    }
+
+    // When the page becomes visible again after backgrounding or screen-off:
+    // aggressively restart GPS, reacquire the wake lock, and resume the AudioContext.
+    document.addEventListener('visibilitychange', () => {
+      const vis = document.visibilityState;
+      debugLog(`visibility: ${vis}`);
+      if (vis === 'visible') {
+        // Always restart the GPS watcher — don't trust the existing one to resume
+        debugLog('gps restart');
+        startTracking();
+        if (wakeLock === null) requestWakeLock();
+        if (audioCtx) {
+          debugLog(`resume called (was:${audioCtx.state})`);
+          audioCtx.resume()
+            .then(() => debugLog(`resume ok: ${audioCtx.state}`))
+            .catch(err => debugLog(`resume ERR: ${err.message}`));
+        }
+      }
+      renderDebug();
+    });
+
+    // --- Tap to start: unlock audio + begin GPS + wake lock ---
+    document.getElementById('start-overlay').addEventListener('click', function () {
+      this.remove();
+      // Start GPS immediately — never let audio init block it
+      startTracking();
+      // Init audio in parallel; errors are silenced so GPS is unaffected
+      initAudio().catch(() => {});
+      // Request wake lock to keep screen on during play
+      requestWakeLock();
+    });
+
+    // --- GPS tracking ---
+    let playerMarker  = null;
+    let watchId       = null;
+    let gpsRetryTimer = null;
+    let lastFixTime   = null;
+
+    const GPS_STALE_MS = 10000; // grey out the dot after 10 s without a fix
+
+    // Poll every 2 s and update the marker colour to reflect GPS freshness
+    setInterval(() => {
+      if (!playerMarker) return;
+      const stale = lastFixTime === null || (Date.now() - lastFixTime) > GPS_STALE_MS;
+      playerMarker.setStyle(stale
+        ? { color: '#757575', fillColor: '#bdbdbd' }   // grey — stale
+        : { color: '#1565C0', fillColor: '#42A5F5' }   // blue — fresh
+      );
+    }, 2000);
+
+    function checkProximity(latitude, longitude) {
+      const userLatLng = L.latLng(latitude, longitude);
+
+      CIRCLE_DEFS.forEach(def => {
+        const rt      = circleRuntime[def.name];
+        const inRange = userLatLng.distanceTo(L.latLng(def.lat, def.lng)) <= def.radius;
+
+        // Locked circles are invisible to the player — skip entirely
+        if (rt.state === 'locked') return;
+
+        if (inRange && rt.state === 'passive') {
+          // passive → active
+          rt.state = 'active';
+          rt.visited += 1;
+          rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
+          if (navigator.vibrate) navigator.vibrate(200);
+          playWhisper(def.whisper);
+          checkUnlocks();
+        } else if (!inRange && rt.state === 'active') {
+          // active → passive
+          rt.state = 'passive';
+          rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
+          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+        }
+      });
+    }
+
+    function onPosition(pos) {
+      const { latitude, longitude } = pos.coords;
+      lastFixTime = Date.now();
+
+      if (!playerMarker) {
+        // First fix — create marker and pan to it
+        playerMarker = L.circleMarker([latitude, longitude], {
+          radius:      8,
+          color:       '#1565C0',
+          fillColor:   '#42A5F5',
+          fillOpacity: 0.9,
+          weight:      2,
+        }).addTo(map);
+        map.setView([latitude, longitude], 17);
+      } else {
+        playerMarker.setLatLng([latitude, longitude]);
+      }
+
+      checkProximity(latitude, longitude);
+    }
+
+    function onGpsError(err) {
+      // PERMISSION_DENIED (code 1) — user has blocked location; retrying won't help
+      if (err.code === 1) return;
+
+      // POSITION_UNAVAILABLE (code 2) or TIMEOUT (code 3) — clear the dead watch and restart
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      clearTimeout(gpsRetryTimer);
+      gpsRetryTimer = setTimeout(startTracking, 3000);
+    }
+
+    function startTracking() {
+      if (!('geolocation' in navigator)) return;
+      // Clear any existing watch before starting a new one
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+      watchId = navigator.geolocation.watchPosition(onPosition, onGpsError, {
+        enableHighAccuracy: true,
+        maximumAge:         5000,
+        timeout:            10000,
+      });
+    }
+
+    // --- Service Worker registration ---
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+
+      // Reload automatically when a new service worker activates,
+      // so the app always runs the latest version after a deploy.
+      navigator.serviceWorker.addEventListener('message', event => {
+        if (event.data?.type === 'SW_UPDATED') {
+          window.location.reload();
+        }
+      });
+    }
+  </script>
+
+</body>
+</html>

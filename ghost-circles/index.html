@@ -133,12 +133,7 @@
     // --- Player items ---
     // Each item: name (internal key), icon (emoji), audio (file path or null),
     // startPresent (true = in inventory at game start).
-    const PLAYER_ITEMS = [
-      { name: 'silver-key', icon: '🗝️', audio: null, startPresent: false },
-      { name: 'heart-1',    icon: '❤️', audio: null, startPresent: true  },
-      { name: 'heart-2',    icon: '❤️', audio: null, startPresent: true  },
-      { name: 'heart-3',    icon: '❤️', audio: null, startPresent: true  },
-    ];
+    const PLAYER_ITEMS = [];
 
     // Live inventory: Set of item names currently held by the player.
     const playerInventory = new Set(
@@ -158,16 +153,15 @@
     //   — true when the named circle has been visited at least n times.
     const CIRCLE_DEFS = [
       {
-        name:             'lindevej-a',
-        lat:              55.9933,
-        lng:              12.5500,
-        radius:           50,
-        priority:         50,
-        visible:          false,
-        repeat:           1,
-        whisper:          'audio/trigger.m4a',
-        conditions:       [],
-        inventoryActions: [{ type: 'add', item: 'silver-key' }],
+        name:       'lindevej-a',
+        lat:        55.9933,
+        lng:        12.5500,
+        radius:     50,
+        priority:   50,
+        visible:    false,
+        repeat:     1,
+        whisper:    'audio/trigger.m4a',
+        conditions: [],
       },
       {
         name:       'lindevej-b',
@@ -178,10 +172,7 @@
         visible:    false,
         repeat:     3,
         whisper:    'audio/youfoundit.m4a',
-        conditions: [
-          { type: 'visited', circle: 'lindevej-a', minTimes: 1 },
-          { type: 'hasItem', item: 'silver-key' },
-        ],
+        conditions: [{ type: 'visited', circle: 'lindevej-a', minTimes: 1 }],
       },
     ];
 

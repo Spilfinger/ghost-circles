@@ -4,25 +4,24 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v2.4)
+## Current State (v2.5t)
 
-Two live ghost circles with full proximity detection, audio playback, a lock/unlock progression system, a priority system for overlapping circles, per-circle whisper repeat control, and a player inventory system. Robust iPhone behaviour: screen wake lock, aggressive GPS recovery, and audio context recovery after screen off/on. Debug overlay available via URL parameter.
+Engine with full proximity detection, audio playback, lock/unlock and re-lock progression, priority system, whisper repeat control, and player inventory. Robust iPhone behaviour: screen wake lock, aggressive GPS recovery, audio context recovery. Debug overlay available via URL parameter.
 
 ### What works
 - Full-screen Leaflet.js map (OpenStreetMap tiles) with the player's live GPS position shown as a blue dot
 - Blue dot turns grey if no GPS fix received for more than 10 seconds (staleness indicator)
-- Two ghost circles: lindevej-a (invisible, 50 m) and lindevej-b (invisible/locked, 40 m)
 - `visible` property per circle: if false, the circle is not drawn on the map. All logic (state machine, audio, priority) runs regardless. Circles hidden at start can appear later — unlocking a locked circle automatically makes it visible
-- Lock/unlock state machine: lindevej-b unlocks after lindevej-a has been visited at least once. When it unlocks, it becomes visible on the map
-- Immediate activation on unlock: if a player is already standing inside a circle when it unlocks, it activates immediately without requiring an exit and re-entry
-- Priority system: when a player is inside multiple overlapping circles, only the highest-priority circle(s) play their whisper and show as active (green). Lower-priority circles stay passive (red). On a tie, all tied circles activate simultaneously
-- Each circle has a `visited` counter that increments each time the player enters it (passive → active)
+- Lock/unlock state machine: `conditions` array (ALL must be true) controls locked → passive. Immediate activation on unlock if the player is already inside
+- **Re-locking**: `lockConditions` array (ANY one being true triggers re-lock). When met, a passive or active circle immediately reverts to locked (audio fades out if playing). When the condition clears and unlock conditions are still met, the circle restores to passive automatically
+- Priority system: when a player is inside multiple unlocked circles simultaneously, only the highest-priority circle(s) activate. On a tie, all tied circles activate simultaneously. Lower-priority circles stay passive
+- Each circle has a `visited` counter that increments each time the circle transitions passive → active
 - `repeat` property per circle: `1` = play whisper once on entry (default), `0` = loop continuously until exit, `N` = play N times in sequence
 - All audio routes through a GainNode so exit fades work correctly for both looping and sequential playback
 - On exit (active → passive): whisper audio fades out over 1 second, then stops. No-op if audio already finished naturally
-- **Player inventory**: a `PLAYER_ITEMS` array defines items with name, icon (emoji), audio file, and startPresent flag. Items held by the player are displayed as a row of emoji buttons just below the version pill. Tapping an item plays its description audio (if any). `PLAYER_ITEMS` is empty in the base release — populate it when building an experience
-- `inventoryActions` on circles: optional array of `{ type: "add" | "remove", item: <name> }` actions that fire when a circle transitions passive → active
-- `hasItem` condition type: `{ type: "hasItem", item: <name> }` — condition is satisfied if that item is currently in inventory
+- **Player inventory**: `PLAYER_ITEMS` array defines items (name, icon emoji, audio, startPresent). Present items shown as a row of emoji buttons below the version pill. Tapping plays description audio if one exists. `PLAYER_ITEMS` is empty in the base release
+- `inventoryActions` on circles: optional array of `{ type: "add" | "remove", item: <name> }` actions that fire on passive → active
+- Condition types: `visited`, `hasItem`, `isActive` — all work in both `conditions` and `lockConditions`
 - "Tap to Start" full-screen overlay — required to unlock iOS audio and GPS simultaneously
 - Web Audio API for audio playback; all whisper and item audio files pre-loaded at startup in parallel
 - Screen Wake Lock: requested after tap-to-start, reacquired automatically on return from background
@@ -45,6 +44,8 @@ ghost-circles/
   audio/
     trigger.m4a       — whisper for lindevej-a
     youfoundit.m4a    — whisper for lindevej-b
+    goal.m4a          — whisper for goal (bullseye inner circle)
+    near.m4a          — whisper for near (bullseye outer circle)
 ```
 
 ## Naming Conventions
@@ -71,11 +72,13 @@ ghost-circles/
 - `playerInventory` — `Set<string>` of item names currently held by the player
 - `renderInventory()` — re-renders the inventory row from `playerInventory`; called at startup and after any inventory change
 - `playItemAudio(item)` — plays an item's description audio once via Web Audio API
-- `CIRCLE_DEFS` — array of circle definition objects (name, lat, lng, radius, priority, visible, repeat, whisper, conditions, inventoryActions?)
+- `CIRCLE_DEFS` — array of circle definition objects (name, lat, lng, radius, priority, visible, repeat, whisper, conditions, lockConditions?, inventoryActions?)
 - `circleRuntime` — object keyed by name: `{ def, leafletCircle, state, inRange, visited, onMap, activeGain, activeSource, playsRemaining }`
-- `evaluateConditions(def)` — returns true if all conditions for a circle are satisfied. Supports `visited` and `hasItem` condition types
-- `checkUnlocks(userLatLng)` — promotes any locked circle whose conditions are now met to passive; pre-sets `inRange` on promoted circles; returns true if anything was promoted
-- `checkProximity(lat, lng)` — three-pass algorithm: update inRange → find maxPriority → resolve state transitions. Fires `inventoryActions` on passive→active. Re-runs itself if `checkUnlocks` promoted any circles
+- `evaluateCondition(cond)` — evaluates a single condition object; supports `visited`, `hasItem`, `isActive`
+- `evaluateConditions(def)` — returns true if ALL unlock conditions are satisfied (uses `evaluateCondition`)
+- `evaluateLockConditions(def)` — returns true if ANY lock condition is met (uses `evaluateCondition`)
+- `checkUnlocks(userLatLng)` — promotes any locked circle whose conditions are now met to passive; pre-sets `inRange`; returns true if anything was promoted
+- `checkProximity(lat, lng)` — four-pass algorithm: (1) update inRange → (2) find maxPriority → (3) resolve transitions, fire `inventoryActions` → recurse if unlocks → (4) apply re-lock/re-unlock rules
 - `startWhisperPlayback(rt)` — starts audio for a circle according to its `repeat` setting, routed through a GainNode
 - `playNextInSequence(rt, gain)` — chains sequential plays via `onended`; bails if session was cancelled
 - `stopWhisperPlayback(rt)` — fades out active audio over 1 second and stops; no-op if already finished
@@ -96,10 +99,14 @@ ghost-circles/
      visible:          true,           // false = hidden on map until unlocked
      repeat:           1,              // 1 = once, 0 = loop, N = N times
      whisper:          'audio/mywhisper.m4a',
-     conditions:       [],             // { type: 'visited', circle: <name>, minTimes: <n> }
-                                       // { type: 'hasItem', item: <name> }
-     inventoryActions: [],             // optional: [{ type: 'add'|'remove', item: <name> }]
+     conditions:       [],             // ALL must be true to unlock (locked → passive)
+     // lockConditions: [],            // optional — ANY one being true re-locks (passive/active → locked)
+     // inventoryActions: [],          // optional — [{ type: 'add'|'remove', item: <name> }]
    }
+   // Condition types (work in both conditions and lockConditions):
+   // { type: 'visited',  circle: <name>, minTimes: <n> }
+   // { type: 'hasItem',  item: <name> }
+   // { type: 'isActive', circle: <name> }
    ```
 2. Place the `.m4a` file in `audio/`
 3. No other code changes needed
@@ -149,6 +156,6 @@ All logging runs in production too — it just writes to a hidden element. No pe
 ## Next Steps
 
 - **Persistent inventory**: save `playerInventory` to `localStorage` so items survive page reloads and sessions
-- **Visibility conditions**: extend the conditions system to support showing/hiding circles based on runtime state beyond just unlocking (e.g. time of day, visit count thresholds)
 - **Audio fade-in**: mirror the exit fade with a fade-in on entry for smoother audio transitions
 - **Ambient/background audio**: a persistent audio layer that plays regardless of circle state (e.g. atmospheric sound for the whole experience)
+- **Visibility conditions**: extend the conditions system to support showing/hiding circles based on runtime state beyond just unlocking (e.g. time of day, visit count thresholds)

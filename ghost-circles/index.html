@@ -107,7 +107,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v2.4</div>
+  <div id="version">v2.5t</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -146,12 +146,14 @@
     const COLOR_ACTIVE  = '#2e7d32';  // green — player is currently inside
 
     // --- Circle definitions ---
-    // conditions: array of condition objects that must all be true for this circle to unlock.
-    // An empty array means the circle is passive (unlocked) from the start.
-    // Supported condition type:
-    //   { type: "visited", circle: <name>, minTimes: <n> }
-    //   — true when the named circle has been visited at least n times.
+    // conditions:      all must be true for this circle to unlock (locked → passive).
+    // lockConditions:  any one being true re-locks this circle (passive/active → locked).
+    // Supported condition types for both arrays:
+    //   { type: "visited",  circle: <name>, minTimes: <n> }  — circle visited ≥ n times
+    //   { type: "hasItem",  item: <name> }                   — item is in player inventory
+    //   { type: "isActive", circle: <name> }                 — circle is currently active
     const CIRCLE_DEFS = [
+      // --- Lindevej circles (locked for this test build) ---
       {
         name:       'lindevej-a',
         lat:        55.9933,
@@ -161,7 +163,7 @@
         visible:    false,
         repeat:     1,
         whisper:    'audio/trigger.m4a',
-        conditions: [],
+        conditions: [{ type: 'visited', circle: 'goal', minTimes: 999 }], // test lock
       },
       {
         name:       'lindevej-b',
@@ -173,6 +175,30 @@
         repeat:     3,
         whisper:    'audio/youfoundit.m4a',
         conditions: [{ type: 'visited', circle: 'lindevej-a', minTimes: 1 }],
+      },
+      // --- Bullseye test circles ---
+      {
+        name:           'goal',
+        lat:            55.9934,
+        lng:            12.5501,
+        radius:         5,
+        priority:       60,
+        visible:        true,
+        repeat:         1,
+        whisper:        'audio/goal.m4a',
+        conditions:     [],
+      },
+      {
+        name:           'near',
+        lat:            55.9934,
+        lng:            12.5501,
+        radius:         15,
+        priority:       50,
+        visible:        true,
+        repeat:         0,
+        whisper:        'audio/near.m4a',
+        conditions:     [],
+        lockConditions: [{ type: 'visited', circle: 'goal', minTimes: 1 }],
       },
     ];
 
@@ -211,17 +237,24 @@
       };
     });
 
-    // Returns true if all conditions for a circle definition are satisfied.
+    // Evaluate a single condition object. Used by both evaluateConditions and
+    // evaluateLockConditions so all condition types are defined in one place.
+    function evaluateCondition(cond) {
+      if (cond.type === 'visited')  return (circleRuntime[cond.circle]?.visited ?? 0) >= cond.minTimes;
+      if (cond.type === 'hasItem')  return playerInventory.has(cond.item);
+      if (cond.type === 'isActive') return circleRuntime[cond.circle]?.state === 'active';
+      return false;
+    }
+
+    // Returns true if ALL unlock conditions for a circle are satisfied (locked → passive).
     function evaluateConditions(def) {
-      return def.conditions.every(cond => {
-        if (cond.type === 'visited') {
-          return (circleRuntime[cond.circle]?.visited ?? 0) >= cond.minTimes;
-        }
-        if (cond.type === 'hasItem') {
-          return playerInventory.has(cond.item);
-        }
-        return false;
-      });
+      return def.conditions.every(cond => evaluateCondition(cond));
+    }
+
+    // Returns true if ANY lock condition is met (passive/active → locked).
+    function evaluateLockConditions(def) {
+      if (!def.lockConditions?.length) return false;
+      return def.lockConditions.some(cond => evaluateCondition(cond));
     }
 
     // Re-evaluate all locked circles and unlock any whose conditions are now met.
@@ -531,6 +564,27 @@
       // it without having to exit and re-enter. Terminates because each re-run can
       // only promote circles that were locked, and promotions are a one-way transition.
       if (anyUnlocked) checkProximity(latitude, longitude);
+
+      // Pass 4: apply re-locking rules. Runs after all unlock recursion is resolved so
+      // it sees stable, up-to-date states (e.g. a circle that just became active this tick).
+      CIRCLE_DEFS.forEach(def => {
+        if (!def.lockConditions?.length) return;
+        const rt = circleRuntime[def.name];
+
+        if ((rt.state === 'passive' || rt.state === 'active') && evaluateLockConditions(def)) {
+          // A lock condition is met — re-lock immediately.
+          if (rt.state === 'active') stopWhisperPlayback(rt);
+          rt.state   = 'locked';
+          rt.inRange = false;
+          rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
+        } else if (rt.state === 'locked' && !evaluateLockConditions(def) && evaluateConditions(def)) {
+          // Lock condition cleared and unlock conditions still met — restore to passive.
+          // Pre-set inRange so it can activate on the very next GPS tick if the player is inside.
+          rt.state   = 'passive';
+          rt.inRange = userLatLng.distanceTo(L.latLng(def.lat, def.lng)) <= def.radius;
+          rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
+        }
+      });
     }
 
     function onPosition(pos) {

@@ -4,17 +4,22 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v2.0)
+## Current State (v2.3)
 
-Clean milestone build. Two live ghost circles with full proximity detection, audio playback, a lock/unlock progression system, and a priority system for overlapping circles. Robust iPhone behaviour: screen wake lock, aggressive GPS recovery, and audio context recovery after screen off/on. Debug overlay available via URL parameter.
+Two live ghost circles with full proximity detection, audio playback, a lock/unlock progression system, a priority system for overlapping circles, and per-circle whisper repeat control. Robust iPhone behaviour: screen wake lock, aggressive GPS recovery, and audio context recovery after screen off/on. Debug overlay available via URL parameter.
 
 ### What works
 - Full-screen Leaflet.js map (OpenStreetMap tiles) with the player's live GPS position shown as a blue dot
 - Blue dot turns grey if no GPS fix received for more than 10 seconds (staleness indicator)
-- Two ghost circles: lindevej-a (red, 50 m) and lindevej-b (grey/locked, 30 m)
-- Lock/unlock state machine: lindevej-b unlocks after lindevej-a has been visited at least once
+- Two ghost circles: lindevej-a (invisible, 50 m) and lindevej-b (invisible/locked, 40 m)
+- `visible` property per circle: if false, the circle is not drawn on the map. All logic (state machine, audio, priority) runs regardless. Circles hidden at start can appear later — unlocking a locked circle automatically makes it visible
+- Lock/unlock state machine: lindevej-b unlocks after lindevej-a has been visited at least once. When it unlocks, it becomes visible on the map
+- Immediate activation on unlock: if a player is already standing inside a circle when it unlocks, it activates immediately without requiring an exit and re-entry
 - Priority system: when a player is inside multiple overlapping circles, only the highest-priority circle(s) play their whisper and show as active (green). Lower-priority circles stay passive (red). On a tie, all tied circles activate simultaneously
 - Each circle has a `visited` counter that increments each time the player enters it (passive → active)
+- `repeat` property per circle: `1` = play whisper once on entry (default), `0` = loop continuously until exit, `N` = play N times in sequence
+- All audio routes through a GainNode so exit fades work correctly for both looping and sequential playback
+- On exit (active → passive): whisper audio fades out over 1 second, then stops. No-op if audio already finished naturally
 - "Tap to Start" full-screen overlay — required to unlock iOS audio and GPS simultaneously
 - Web Audio API for audio playback; all whisper files pre-loaded at startup in parallel
 - Screen Wake Lock: requested after tap-to-start, reacquired automatically on return from background
@@ -59,12 +64,14 @@ ghost-circles/
 | Active | Green | `#2e7d32` |
 
 ### Code conventions
-- `CIRCLE_DEFS` — array of circle definition objects (name, lat, lng, radius, priority, whisper, conditions)
-- `circleRuntime` — object keyed by name: `{ def, leafletCircle, state, inRange, visited }`
+- `CIRCLE_DEFS` — array of circle definition objects (name, lat, lng, radius, priority, visible, repeat, whisper, conditions)
+- `circleRuntime` — object keyed by name: `{ def, leafletCircle, state, inRange, visited, onMap, activeGain, activeSource, playsRemaining }`
 - `evaluateConditions(def)` — returns true if all conditions for a circle are satisfied
-- `checkUnlocks()` — promotes any locked circle whose conditions are now met to passive
-- `checkProximity(lat, lng)` — three-pass algorithm: update inRange → find maxPriority → resolve state transitions
-- `playWhisper(file)` — plays a pre-loaded AudioBuffer by file path
+- `checkUnlocks(userLatLng)` — promotes any locked circle whose conditions are now met to passive; pre-sets `inRange` on promoted circles; returns true if anything was promoted
+- `checkProximity(lat, lng)` — three-pass algorithm: update inRange → find maxPriority → resolve state transitions. Re-runs itself if `checkUnlocks` promoted any circles
+- `startWhisperPlayback(rt)` — starts audio for a circle according to its `repeat` setting, routed through a GainNode
+- `playNextInSequence(rt, gain)` — chains sequential plays via `onended`; bails if session was cancelled
+- `stopWhisperPlayback(rt)` — fades out active audio over 1 second and stops; no-op if already finished
 - `initAudio()` — creates AudioContext and pre-loads all whisper files
 - `startTracking()` — starts (or restarts) the GPS watcher; always clears existing watcher first
 - `DEBUG_MODE` — true when `?debug=true` is in the URL
@@ -78,7 +85,9 @@ ghost-circles/
      lat:        55.9950,
      lng:        12.5510,
      radius:     40,
-     priority:   50,
+     priority:   50,             // higher = takes precedence in overlaps
+     visible:    true,           // false = hidden on map until unlocked
+     repeat:     1,              // 1 = once, 0 = loop, N = N times
      whisper:    'audio/mywhisper.m4a',
      conditions: [],             // or: [{ type: 'visited', circle: 'other-name', minTimes: 1 }]
    }
@@ -120,6 +129,7 @@ All logging runs in production too — it just writes to a hidden element. No pe
 
 ## Next Steps
 
-- **Visibility state**: show/hide circles or change their appearance based on time of day, player history, or other runtime conditions
-- **Audio playcount / repeat**: control how many times a whisper plays, or loop ambient audio while the player remains inside a circle
-- **Player inventory**: track which circles the player has visited across sessions (e.g. using localStorage), and use that as a new condition type
+- **Visibility conditions**: extend the conditions system to support showing/hiding circles based on runtime state beyond just unlocking (e.g. time of day, visit count thresholds)
+- **Player inventory**: track which circles the player has visited across sessions using `localStorage`, and use that as a new condition type
+- **Audio fade-in**: mirror the exit fade with a fade-in on entry for smoother audio transitions
+- **Ambient/background audio**: a persistent audio layer that plays regardless of circle state (e.g. atmospheric sound for the whole experience)

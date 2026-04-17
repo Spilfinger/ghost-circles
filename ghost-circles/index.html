@@ -86,7 +86,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v2.3t</div>
+  <div id="version">v2.3</div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
@@ -125,9 +125,9 @@
         lat:        55.9933,
         lng:        12.5500,
         radius:     50,
-        priority:   60,
-        visible:    true,
-        repeat:     0,
+        priority:   50,
+        visible:    false,
+        repeat:     1,
         whisper:    'audio/trigger.m4a',
         conditions: [],
       },
@@ -135,9 +135,9 @@
         name:       'lindevej-b',
         lat:        55.9942,
         lng:        12.5503,
-        radius:     100,
-        priority:   60,
-        visible:    true,
+        radius:     40,
+        priority:   50,
+        visible:    false,
         repeat:     3,
         whisper:    'audio/youfoundit.m4a',
         conditions: [{ type: 'visited', circle: 'lindevej-a', minTimes: 1 }],

@@ -86,7 +86,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v2.2</div>
+  <div id="version">v2.3</div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
@@ -191,7 +191,11 @@
 
     // Re-evaluate all locked circles and unlock any whose conditions are now met.
     // Unlocking also makes the circle visible on the map if it wasn't already.
-    function checkUnlocks() {
+    // userLatLng is the player's current position — used to pre-compute inRange on
+    // newly promoted circles so a re-run of checkProximity can detect them immediately.
+    // Returns true if any circle was promoted (signals that a re-run is needed).
+    function checkUnlocks(userLatLng) {
+      let anyPromoted = false;
       CIRCLE_DEFS.forEach(def => {
         const rt = circleRuntime[def.name];
         if (rt.state === 'locked' && evaluateConditions(def)) {
@@ -201,8 +205,12 @@
             rt.leafletCircle.addTo(map);
             rt.onMap = true;
           }
+          // Pre-set inRange so the re-run sees the correct value for this circle
+          rt.inRange = userLatLng.distanceTo(L.latLng(def.lat, def.lng)) <= def.radius;
+          anyPromoted = true;
         }
       });
+      return anyPromoted;
     }
 
     // --- Debug log ---
@@ -420,11 +428,12 @@
       });
 
       // Pass 3: resolve each circle's desired state and fire transitions.
+      let anyUnlocked = false;
       CIRCLE_DEFS.forEach(def => {
         const rt          = circleRuntime[def.name];
         if (rt.state === 'locked') return;
 
-        const priority      = def.priority ?? 50;
+        const priority       = def.priority ?? 50;
         const shouldBeActive = rt.inRange && priority >= maxPriority;
         const wasActive      = rt.state === 'active';
 
@@ -435,7 +444,7 @@
           rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
           if (navigator.vibrate) navigator.vibrate(200);
           startWhisperPlayback(rt);
-          checkUnlocks();
+          if (checkUnlocks(userLatLng)) anyUnlocked = true;
         } else if (!shouldBeActive && wasActive) {
           // → passive: either the player physically exited, or a higher-priority circle
           //   became active (priority demotion). Only vibrate on physical exit.
@@ -445,6 +454,12 @@
           if (!rt.inRange && navigator.vibrate) navigator.vibrate([200, 100, 200]);
         }
       });
+
+      // If circles were just unlocked, re-run immediately with the same position.
+      // This lets a player already standing inside a newly unlocked circle activate
+      // it without having to exit and re-enter. Terminates because each re-run can
+      // only promote circles that were locked, and promotions are a one-way transition.
+      if (anyUnlocked) checkProximity(latitude, longitude);
     }
 
     function onPosition(pos) {

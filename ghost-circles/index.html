@@ -325,11 +325,11 @@
 
       // Ramp gain to 0 over 0.5 s, then stop the source and disconnect
       gain.gain.setValueAtTime(gain.gain.value, audioCtx.currentTime);
-      gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.5);
+      gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.0);
       setTimeout(() => {
         try { if (source) source.stop(); } catch (_) {}
         try { gain.disconnect(); } catch (_) {}
-      }, 550);
+      }, 1100);
     }
 
     // --- Screen Wake Lock ---

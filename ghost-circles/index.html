@@ -86,7 +86,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v2.1</div>
+  <div id="version">v2.2</div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
@@ -126,7 +126,8 @@
         lng:        12.5500,
         radius:     50,
         priority:   50,
-        visible:    false,
+        visible:    true,
+        repeat:     0,
         whisper:    'audio/trigger.m4a',
         conditions: [],
       },
@@ -136,18 +137,23 @@
         lng:        12.5503,
         radius:     30,
         priority:   50,
-        visible:    false,
+        visible:    true,
+        repeat:     3,
         whisper:    'audio/youfoundit.m4a',
         conditions: [{ type: 'visited', circle: 'lindevej-a', minTimes: 1 }],
       },
     ];
 
     // --- Build runtime state and Leaflet circles ---
-    // circleRuntime[name] = { def, leafletCircle, state, inRange, visited, onMap }
-    // state:   'locked' | 'passive' | 'active'
-    // inRange: true when the player is physically within the circle's radius
-    // visited: number of times the circle has transitioned passive → active
-    // onMap:   true when the Leaflet circle has been added to the map (i.e. visible)
+    // circleRuntime[name] = { def, leafletCircle, state, inRange, visited, onMap,
+    //                         activeGain, activeSource, playsRemaining }
+    // state:          'locked' | 'passive' | 'active'
+    // inRange:        true when the player is physically within the circle's radius
+    // visited:        number of times the circle has transitioned passive → active
+    // onMap:          true when the Leaflet circle has been added to the map
+    // activeGain:     the GainNode for the current audio session (null if not playing)
+    // activeSource:   the current BufferSourceNode (null if not playing)
+    // playsRemaining: how many more sequential plays remain in the current session
     const circleRuntime = {};
 
     CIRCLE_DEFS.forEach(def => {
@@ -167,7 +173,10 @@
       const onMap = def.visible !== false;
       if (onMap) leafletCircle.addTo(map);
 
-      circleRuntime[def.name] = { def, leafletCircle, state, inRange: false, visited: 0, onMap };
+      circleRuntime[def.name] = {
+        def, leafletCircle, state, inRange: false, visited: 0, onMap,
+        activeGain: null, activeSource: null, playsRemaining: 0,
+      };
     });
 
     // Returns true if all conditions for a circle definition are satisfied.
@@ -245,16 +254,82 @@
       renderDebug();
     }
 
-    function playWhisper(file) {
-      const buffer = whisperBuffers[file];
+    // Start whisper playback for a circle according to its repeat setting.
+    // repeat: 0 = loop continuously, repeat: N = play N times in sequence.
+    // All playback routes through a GainNode so it can be faded on exit.
+    function startWhisperPlayback(rt) {
+      const buffer = whisperBuffers[rt.def.whisper];
       if (!audioCtx || !buffer) return;
-      debugLog(`play: ${file.split('/').pop()} (ctx:${audioCtx.state})`);
-      const source = audioCtx.createBufferSource();
-      source.buffer = buffer;
-      source.loop = false;
-      source.connect(audioCtx.destination);
-      source.start(0);
+
+      const repeat = rt.def.repeat ?? 1;
+      const label  = repeat === 0 ? '∞' : String(repeat);
+      debugLog(`play: ${rt.def.whisper.split('/').pop()} ×${label} (ctx:${audioCtx.state})`);
+
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(1, audioCtx.currentTime);
+      gain.connect(audioCtx.destination);
+      rt.activeGain = gain;
+
+      if (repeat === 0) {
+        // Loop continuously until the player exits
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.loop = true;
+        source.connect(gain);
+        source.start(0);
+        rt.activeSource = source;
+      } else {
+        // Play N times in sequence
+        rt.playsRemaining = repeat;
+        playNextInSequence(rt, gain);
+      }
       renderDebug();
+    }
+
+    function playNextInSequence(rt, gain) {
+      // Guard: bail if this session was cancelled or all plays are done
+      if (rt.activeGain !== gain || rt.playsRemaining <= 0) return;
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = whisperBuffers[rt.def.whisper];
+      source.loop   = false;
+      source.connect(gain);
+      rt.activeSource = source;
+      rt.playsRemaining--;
+
+      source.onended = () => {
+        if (rt.activeGain !== gain) return; // session was stopped externally
+        if (rt.playsRemaining > 0) {
+          playNextInSequence(rt, gain);
+        } else {
+          // Natural completion — clean up the session
+          rt.activeGain   = null;
+          rt.activeSource = null;
+          try { gain.disconnect(); } catch (_) {}
+        }
+      };
+
+      source.start(0);
+    }
+
+    // Fade out any active whisper playback for a circle over 0.5 s, then stop.
+    // No-op if nothing is playing (e.g. all repeats already finished naturally).
+    function stopWhisperPlayback(rt) {
+      const gain   = rt.activeGain;
+      const source = rt.activeSource;
+      if (!gain) return;
+
+      // Clear immediately so playNextInSequence won't chain further plays
+      rt.activeGain   = null;
+      rt.activeSource = null;
+
+      // Ramp gain to 0 over 0.5 s, then stop the source and disconnect
+      gain.gain.setValueAtTime(gain.gain.value, audioCtx.currentTime);
+      gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.5);
+      setTimeout(() => {
+        try { if (source) source.stop(); } catch (_) {}
+        try { gain.disconnect(); } catch (_) {}
+      }, 550);
     }
 
     // --- Screen Wake Lock ---
@@ -359,13 +434,14 @@
           rt.visited += 1;
           rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
           if (navigator.vibrate) navigator.vibrate(200);
-          playWhisper(def.whisper);
+          startWhisperPlayback(rt);
           checkUnlocks();
         } else if (!shouldBeActive && wasActive) {
           // → passive: either the player physically exited, or a higher-priority circle
           //   became active (priority demotion). Only vibrate on physical exit.
           rt.state = 'passive';
           rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
+          stopWhisperPlayback(rt);
           if (!rt.inRange && navigator.vibrate) navigator.vibrate([200, 100, 200]);
         }
       });

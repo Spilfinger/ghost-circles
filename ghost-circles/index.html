@@ -181,7 +181,7 @@
 
     #placement-circle {
       width: 160px; height: 160px;
-      border: 2px dashed rgba(255, 255, 255, 0.85);
+      border: 2px dashed #1a2a4a;
       border-radius: 50%;
       position: relative;
     }
@@ -190,16 +190,16 @@
       content: '';
       position: absolute;
       left: 50%; top: 12px; bottom: 12px;
-      width: 1px; margin-left: -0.5px;
-      background: rgba(255, 255, 255, 0.85);
+      width: 1.5px; margin-left: -0.75px;
+      background: #1a2a4a;
     }
     /* Horizontal arm */
     #placement-circle::after {
       content: '';
       position: absolute;
       top: 50%; left: 12px; right: 12px;
-      height: 1px; margin-top: -0.5px;
-      background: rgba(255, 255, 255, 0.85);
+      height: 1.5px; margin-top: -0.75px;
+      background: #1a2a4a;
     }
 
     #placement-readout {
@@ -346,6 +346,20 @@
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
     }
+
+    #panel-close-btn {
+      position: absolute;
+      top: 14px;
+      right: 16px;
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 4px 6px;
+      -webkit-tap-highlight-color: transparent;
+    }
   </style>
 </head>
 <body>
@@ -376,6 +390,7 @@
   </div>
 
   <div id="editor-panel">
+    <button id="panel-close-btn" aria-label="Close">✕</button>
     <div class="panel-handle-bar"></div>
     <div class="panel-body">
 
@@ -1173,6 +1188,9 @@
           if (!nowOn && rt.onMap)  { map.removeLayer(rt.leafletCircle); rt.onMap = false; }
         }
       });
+
+      // Close button
+      document.getElementById('panel-close-btn').addEventListener('click', () => deselectCircle());
 
       // Delete circle
       document.getElementById('panel-delete-btn').addEventListener('click', () => {

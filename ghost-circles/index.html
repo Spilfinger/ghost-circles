@@ -107,7 +107,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v2.5t</div>
+  <div id="version">v3.0</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -134,9 +134,7 @@
     // Each item: name (internal key), icon (emoji), quantity (integer), audio (file path or null),
     // startPresent (true = in inventory at game start with the given quantity).
     // An item is considered present when its quantity is > 0.
-    const PLAYER_ITEMS = [
-      { name: 'heart', icon: '❤️', quantity: 3, startPresent: true, audio: null },
-    ];
+    const PLAYER_ITEMS = [];
 
     // Live inventory: maps item name → current quantity.
     const playerInventory = {};
@@ -160,39 +158,15 @@
     //   { type: "itemQuantity", item: <name>, max: <n> }         — quantity ≤ n
     const CIRCLE_DEFS = [
       {
-        name:           'near',
-        lat:            55.9936,
-        lng:            12.5504,
-        radius:         25,
-        priority:       50,
-        visible:        true,
-        repeat:         0,
-        whisper:        'audio/near.m4a',
-        conditions:     [{ type: 'itemQuantity', item: 'heart', min: 1 }],
-        lockConditions: [{ type: 'isActive', circle: 'goal' }],
-      },
-      {
-        name:             'goal',
-        lat:              55.9936,
-        lng:              12.5504,
-        radius:           10,
-        priority:         60,
-        visible:          true,
-        repeat:           1,
-        whisper:          'audio/goal.m4a',
-        conditions:       [],
-        inventoryActions: [{ type: 'remove', item: 'heart' }],
-      },
-      {
-        name:       'ohno',
+        name:       'near',
         lat:        55.9936,
         lng:        12.5504,
-        radius:     35,
-        priority:   80,
+        radius:     25,
+        priority:   50,
         visible:    true,
         repeat:     1,
-        whisper:    'audio/ohno.m4a',
-        conditions: [{ type: 'itemQuantity', item: 'heart', max: 0 }],
+        whisper:    'audio/near.m4a',
+        conditions: [],
       },
     ];
 

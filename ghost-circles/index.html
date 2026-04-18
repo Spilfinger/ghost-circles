@@ -107,15 +107,16 @@
        EDITOR MODE — all rules below are inert in play mode
        ===================================================== */
 
-    /* Push Leaflet zoom controls below the editor header */
+    /* Push Leaflet zoom controls and version pill below the editor header */
     body.editor .leaflet-top.leaflet-left { top: 60px; }
+    body.editor #version { top: 60px; }
 
     #editor-header {
       display: none; /* shown via JS when EDITOR_MODE */
       position: fixed;
       top: 0; left: 0; right: 0;
       height: 48px;
-      background: rgba(0, 0, 0, 0.88);
+      background: #1a2a4a;
       color: #fff;
       font-family: system-ui, sans-serif;
       font-size: 15px;
@@ -233,8 +234,9 @@
       transition: transform 0.26s ease;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
+      pointer-events: none; /* don't intercept touches when off-screen */
     }
-    #editor-panel.open { transform: translateY(0); }
+    #editor-panel.open { transform: translateY(0); pointer-events: auto; }
 
     .panel-handle-bar {
       width: 36px; height: 4px;
@@ -981,22 +983,138 @@
         html:       '<div class="cross-icon-inner"><div class="cross-h"></div><div class="cross-v"></div></div>',
       });
 
+      // ---- Helper functions — defined first so setup code below can call them ----
+
+      const getRadiusForPixels = (px) => {
+        const size     = map.getSize();
+        const centerLL = map.containerPointToLatLng(L.point(size.x / 2, size.y / 2));
+        const edgeLL   = map.containerPointToLatLng(L.point(size.x / 2 + px, size.y / 2));
+        return centerLL.distanceTo(edgeLL);
+      };
+
+      const updatePlacementReadout = () => {
+        if (!placementActive) return;
+        const center = map.getCenter();
+        const radius = getRadiusForPixels(PLACEMENT_RADIUS_PX);
+        document.getElementById('placement-readout').textContent =
+          `${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}  ·  r = ${Math.round(radius)} m`;
+      };
+
+      const openPanel = (name) => {
+        const def = circleRuntime[name].def;
+        document.getElementById('prop-name').value     = def.name;
+        document.getElementById('prop-radius').value   = def.radius;
+        document.getElementById('prop-priority').value = def.priority ?? 50;
+        document.getElementById('prop-repeat').value   = def.repeat ?? 1;
+        document.getElementById('prop-whisper').value  = def.whisper ?? '';
+        document.getElementById('prop-visible').classList.toggle('on', def.visible !== false);
+        // Force a layout tick so the CSS transition plays cleanly from translateY(100%)
+        document.getElementById('editor-panel').getBoundingClientRect();
+        document.getElementById('editor-panel').classList.add('open');
+      };
+
+      const closePanel = () => {
+        document.getElementById('editor-panel').classList.remove('open');
+      };
+
+      const clearSelection = () => {
+        if (!selectedCircleName) return;
+        const rt = circleRuntime[selectedCircleName];
+        if (rt) rt.leafletCircle.setStyle({ dashArray: null, weight: 2 });
+      };
+
+      const deselectCircle = () => {
+        if (!selectedCircleName) return;
+        clearSelection();
+        selectedCircleName = null;
+        closePanel();
+      };
+
+      const selectCircle = (name) => {
+        if (selectedCircleName === name) return;
+        if (selectedCircleName) clearSelection();
+        selectedCircleName = name;
+        circleRuntime[name].leafletCircle.setStyle({ dashArray: '6 4', weight: 3 });
+        openPanel(name);
+      };
+
+      const addEditorToCircle = (name) => {
+        const rt = circleRuntime[name];
+        if (!rt) return;
+        const marker = L.marker([rt.def.lat, rt.def.lng], {
+          icon: crossIcon, interactive: true, zIndexOffset: 500,
+        }).addTo(map);
+        rt.centerMarker = marker;
+        const onTap = e => { L.DomEvent.stopPropagation(e); selectCircle(name); };
+        rt.leafletCircle.on('click', onTap);
+        marker.on('click', onTap);
+      };
+
+      const enterPlacementMode = () => {
+        placementActive = true;
+        document.getElementById('editor-add-btn').classList.add('active');
+        document.getElementById('placement-preview').style.display = 'flex';
+        updatePlacementReadout();
+      };
+
+      const confirmPlacement = () => {
+        const center = map.getCenter();
+        const radius = Math.round(getRadiusForPixels(PLACEMENT_RADIUS_PX));
+
+        // Unique auto-name
+        let n = 1;
+        while (CIRCLE_DEFS.find(d => d.name === `circle-${n}`)) n++;
+        const name = `circle-${n}`;
+
+        const def = {
+          name, lat: center.lat, lng: center.lng, radius,
+          priority: 50, visible: true, repeat: 1, whisper: '', conditions: [],
+        };
+        CIRCLE_DEFS.push(def);
+
+        const leafletCircle = L.circle([def.lat, def.lng], {
+          radius, color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE,
+          fillOpacity: 0.15, weight: 2,
+        }).addTo(map);
+
+        circleRuntime[name] = {
+          def, leafletCircle, state: 'passive', inRange: false, visited: 0, onMap: true,
+          activeGain: null, activeSource: null, playsRemaining: 0,
+        };
+
+        placementActive = false;
+        document.getElementById('editor-add-btn').classList.remove('active');
+        document.getElementById('placement-preview').style.display = 'none';
+
+        addEditorToCircle(name);
+        selectCircle(name);
+      };
+
+      // ---- Setup ----
+
+      // Bypass Tap to Start — editor opens straight to the map.
+      // GPS and wake lock start immediately. Audio inits lazily on first user gesture.
+      document.getElementById('start-overlay').remove();
+      startTracking();
+      requestWakeLock();
+      document.addEventListener('click', () => {
+        if (!audioCtx) initAudio().catch(() => {});
+      }, { once: true });
+
       // Show editor chrome
       document.body.classList.add('editor');
-      document.getElementById('editor-header').style.display  = 'flex';
+      document.getElementById('editor-header').style.display   = 'flex';
       document.getElementById('editor-controls').style.display = 'flex';
-      document.getElementById('editor-panel').style.display   = 'block';
+      document.getElementById('editor-panel').style.display    = 'block';
 
       // Wire up existing circles
       CIRCLE_DEFS.forEach(def => addEditorToCircle(def.name));
 
-      // Deselect on bare map tap
+      // Map events
       map.on('click', () => { if (!placementActive) deselectCircle(); });
-
-      // Keep placement readout current as map moves
       map.on('move zoom', updatePlacementReadout);
 
-      // + button: enter placement mode or confirm placement
+      // + button
       document.getElementById('editor-add-btn').addEventListener('click', () => {
         placementActive ? confirmPlacement() : enterPlacementMode();
       });
@@ -1006,12 +1124,12 @@
         if (playerMarker) map.setView(playerMarker.getLatLng(), 17);
       });
 
-      // Panel: live-update circle properties as the user types/changes values
+      // Panel: live-update circle properties
       document.getElementById('prop-name').addEventListener('input', function () {
         if (!selectedCircleName) return;
         const newName = this.value.trim();
         if (!newName || newName === selectedCircleName) return;
-        if (CIRCLE_DEFS.find(d => d.name === newName)) return; // collision — ignore
+        if (CIRCLE_DEFS.find(d => d.name === newName)) return; // name collision
         const rt = circleRuntime[selectedCircleName];
         rt.def.name = newName;
         circleRuntime[newName] = rt;
@@ -1045,14 +1163,14 @@
 
       document.getElementById('prop-visible').addEventListener('click', function () {
         if (!selectedCircleName) return;
-        const rt   = circleRuntime[selectedCircleName];
+        const rt    = circleRuntime[selectedCircleName];
         const nowOn = !this.classList.contains('on');
         this.classList.toggle('on', nowOn);
         rt.def.visible = nowOn;
-        // Immediately reflect on map for static-visibility circles
+        // Immediately reflect for static-visibility circles
         if (!rt.def.visibleConditions?.length && !rt.def.hideConditions?.length) {
-          if (nowOn && !rt.onMap) { rt.leafletCircle.addTo(map); rt.onMap = true; }
-          if (!nowOn && rt.onMap) { map.removeLayer(rt.leafletCircle); rt.onMap = false; }
+          if (nowOn && !rt.onMap)  { rt.leafletCircle.addTo(map); rt.onMap = true; }
+          if (!nowOn && rt.onMap)  { map.removeLayer(rt.leafletCircle); rt.onMap = false; }
         }
       });
 
@@ -1061,121 +1179,13 @@
         if (!selectedCircleName) return;
         const name = selectedCircleName;
         const rt   = circleRuntime[name];
-        if (rt.onMap)       map.removeLayer(rt.leafletCircle);
+        if (rt.onMap)        map.removeLayer(rt.leafletCircle);
         if (rt.centerMarker) map.removeLayer(rt.centerMarker);
         CIRCLE_DEFS.splice(CIRCLE_DEFS.findIndex(d => d.name === name), 1);
         delete circleRuntime[name];
         selectedCircleName = null;
         closePanel();
       });
-
-      // ---- Editor helper functions ----
-
-      const addEditorToCircle = (name) => {
-        const rt = circleRuntime[name];
-        if (!rt) return;
-        const marker = L.marker([rt.def.lat, rt.def.lng], {
-          icon: crossIcon, interactive: true, zIndexOffset: 500,
-        }).addTo(map);
-        rt.centerMarker = marker;
-        const onTap = e => { L.DomEvent.stopPropagation(e); selectCircle(name); };
-        rt.leafletCircle.on('click', onTap);
-        marker.on('click', onTap);
-      };
-
-      const selectCircle = (name) => {
-        if (selectedCircleName === name) return;
-        if (selectedCircleName) clearSelection();
-        selectedCircleName = name;
-        circleRuntime[name].leafletCircle.setStyle({ dashArray: '6 4', weight: 3 });
-        openPanel(name);
-      };
-
-      const clearSelection = () => {
-        if (!selectedCircleName) return;
-        const rt = circleRuntime[selectedCircleName];
-        if (rt) rt.leafletCircle.setStyle({ dashArray: null, weight: 2 });
-      };
-
-      const deselectCircle = () => {
-        if (!selectedCircleName) return;
-        clearSelection();
-        selectedCircleName = null;
-        closePanel();
-      };
-
-      const enterPlacementMode = () => {
-        placementActive = true;
-        document.getElementById('editor-add-btn').classList.add('active');
-        document.getElementById('placement-preview').style.display = 'flex';
-        updatePlacementReadout();
-      };
-
-      const updatePlacementReadout = () => {
-        if (!placementActive) return;
-        const center = map.getCenter();
-        const radius = getRadiusForPixels(PLACEMENT_RADIUS_PX);
-        document.getElementById('placement-readout').textContent =
-          `${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}  ·  r = ${Math.round(radius)} m`;
-      };
-
-      const getRadiusForPixels = (px) => {
-        const size     = map.getSize();
-        const centerLL = map.containerPointToLatLng(L.point(size.x / 2, size.y / 2));
-        const edgeLL   = map.containerPointToLatLng(L.point(size.x / 2 + px, size.y / 2));
-        return centerLL.distanceTo(edgeLL);
-      };
-
-      const confirmPlacement = () => {
-        const center = map.getCenter();
-        const radius = Math.round(getRadiusForPixels(PLACEMENT_RADIUS_PX));
-
-        // Unique auto-name
-        let n = 1;
-        while (CIRCLE_DEFS.find(d => d.name === `circle-${n}`)) n++;
-        const name = `circle-${n}`;
-
-        const def = {
-          name, lat: center.lat, lng: center.lng, radius,
-          priority: 50, visible: true, repeat: 1, whisper: '', conditions: [],
-        };
-        CIRCLE_DEFS.push(def);
-
-        const leafletCircle = L.circle([def.lat, def.lng], {
-          radius, color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE,
-          fillOpacity: 0.15, weight: 2,
-        }).addTo(map);
-
-        circleRuntime[name] = {
-          def, leafletCircle, state: 'passive', inRange: false, visited: 0, onMap: true,
-          activeGain: null, activeSource: null, playsRemaining: 0,
-        };
-
-        // Exit placement mode
-        placementActive = false;
-        document.getElementById('editor-add-btn').classList.remove('active');
-        document.getElementById('placement-preview').style.display = 'none';
-
-        addEditorToCircle(name);
-        selectCircle(name);
-      };
-
-      const openPanel = (name) => {
-        const def = circleRuntime[name].def;
-        document.getElementById('prop-name').value     = def.name;
-        document.getElementById('prop-radius').value   = def.radius;
-        document.getElementById('prop-priority').value = def.priority ?? 50;
-        document.getElementById('prop-repeat').value   = def.repeat ?? 1;
-        document.getElementById('prop-whisper').value  = def.whisper ?? '';
-        document.getElementById('prop-visible').classList.toggle('on', def.visible !== false);
-        // Force a layout tick so the transition plays from translateY(100%)
-        document.getElementById('editor-panel').getBoundingClientRect();
-        document.getElementById('editor-panel').classList.add('open');
-      };
-
-      const closePanel = () => {
-        document.getElementById('editor-panel').classList.remove('open');
-      };
     }
 
     // --- Service Worker registration ---

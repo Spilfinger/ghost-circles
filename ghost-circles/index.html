@@ -102,17 +102,322 @@
       text-transform: uppercase;
       opacity: 0.85;
     }
+
+    /* =====================================================
+       EDITOR MODE — all rules below are inert in play mode
+       ===================================================== */
+
+    /* Push Leaflet zoom controls below the editor header */
+    body.editor .leaflet-top.leaflet-left { top: 60px; }
+
+    #editor-header {
+      display: none; /* shown via JS when EDITOR_MODE */
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 48px;
+      background: rgba(0, 0, 0, 0.88);
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      font-size: 15px;
+      font-weight: 500;
+      padding: 0 16px;
+      gap: 6px;
+      z-index: 1001;
+      align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    #editor-header .eh-label { opacity: 0.55; }
+
+    #haunt-name {
+      outline: none;
+      border-bottom: 1px dashed rgba(255, 255, 255, 0.35);
+      padding: 2px 4px;
+      cursor: text;
+      min-width: 40px;
+    }
+    #haunt-name:focus { border-bottom-color: rgba(255, 255, 255, 0.8); }
+
+    #editor-controls {
+      display: none; /* shown via JS when EDITOR_MODE */
+      position: fixed;
+      bottom: 28px;
+      right: 16px;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 1001;
+    }
+
+    .editor-btn {
+      width: 50px; height: 50px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.78);
+      color: #fff;
+      font-size: 22px;
+      line-height: 1;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.18s;
+    }
+    #editor-add-btn.active { background: #2e7d32; }
+
+    /* Placement preview — fixed at viewport center, pointer-events none */
+    #placement-preview {
+      display: none; /* flex during placement mode */
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 1001;
+      pointer-events: none;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #placement-circle {
+      width: 160px; height: 160px;
+      border: 2px dashed rgba(255, 255, 255, 0.85);
+      border-radius: 50%;
+      position: relative;
+    }
+    /* Vertical arm */
+    #placement-circle::before {
+      content: '';
+      position: absolute;
+      left: 50%; top: 12px; bottom: 12px;
+      width: 1px; margin-left: -0.5px;
+      background: rgba(255, 255, 255, 0.85);
+    }
+    /* Horizontal arm */
+    #placement-circle::after {
+      content: '';
+      position: absolute;
+      top: 50%; left: 12px; right: 12px;
+      height: 1px; margin-top: -0.5px;
+      background: rgba(255, 255, 255, 0.85);
+    }
+
+    #placement-readout {
+      margin-top: 10px;
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 5px 10px;
+      border-radius: 8px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    /* Cross markers at circle centers */
+    .cross-icon { background: none; border: none; }
+    .cross-icon-inner { position: relative; width: 100%; height: 100%; }
+    .cross-h, .cross-v { position: absolute; background: rgba(255, 255, 255, 0.9); }
+    .cross-h { top: 50%; left: 0; right: 0; height: 1.5px; margin-top: -0.75px; }
+    .cross-v { left: 50%; top: 0; bottom: 0; width: 1.5px; margin-left: -0.75px; }
+
+    /* Bottom sheet — circle property editor */
+    #editor-panel {
+      display: none; /* block in editor mode */
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      max-height: 60vh;
+      background: #1c1c1e;
+      border-radius: 16px 16px 0 0;
+      z-index: 1002;
+      transform: translateY(100%);
+      transition: transform 0.26s ease;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    #editor-panel.open { transform: translateY(0); }
+
+    .panel-handle-bar {
+      width: 36px; height: 4px;
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 2px;
+      margin: 10px auto 0;
+    }
+
+    .panel-body {
+      padding: 12px 20px 40px;
+      font-family: system-ui, sans-serif;
+      color: #fff;
+    }
+
+    .prop-section {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.38);
+      margin: 22px 0 10px;
+    }
+    .prop-section:first-child { margin-top: 6px; }
+
+    .prop-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .prop-label {
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.62);
+      width: 86px;
+      flex-shrink: 0;
+    }
+
+    .prop-input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 14px;
+      font-family: system-ui, sans-serif;
+      padding: 8px 10px;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    .prop-input:focus { border-color: rgba(255, 255, 255, 0.32); }
+    .prop-input.mono { font-family: monospace; font-size: 13px; }
+
+    .prop-toggle {
+      width: 44px; height: 26px;
+      border-radius: 13px;
+      border: none;
+      background: rgba(255, 255, 255, 0.14);
+      cursor: pointer;
+      position: relative;
+      transition: background 0.18s;
+      flex-shrink: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .prop-toggle.on { background: #2e7d32; }
+    .prop-toggle::after {
+      content: '';
+      position: absolute;
+      width: 20px; height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      top: 3px; left: 3px;
+      transition: left 0.18s;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+    .prop-toggle.on::after { left: 21px; }
+
+    .panel-empty { font-size: 13px; color: rgba(255,255,255,0.24); font-style: italic; padding: 2px 0 6px; }
+
+    .panel-add-btn {
+      display: block;
+      width: 100%;
+      padding: 9px 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px dashed rgba(255, 255, 255, 0.16);
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.35);
+      font-size: 13px;
+      font-family: system-ui, sans-serif;
+      text-align: left;
+      cursor: default;
+      margin-top: 2px;
+    }
+
+    #panel-delete-btn {
+      display: block;
+      width: 100%;
+      margin-top: 28px;
+      padding: 14px;
+      background: #b71c1c;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: system-ui, sans-serif;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
   </style>
 </head>
 <body>
 
   <div id="map"></div>
-  <div id="version">v3.0</div>
+  <div id="version">v3.1</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
     <span>Tap to Start</span>
+  </div>
+
+  <!-- Editor mode UI — all hidden in play mode, shown via JS when ?editor=true -->
+  <div id="editor-header">
+    <span class="eh-label">Editor Mode —</span>
+    <span id="haunt-name" contenteditable="true" spellcheck="false">New Haunt</span>
+  </div>
+
+  <div id="placement-preview">
+    <div id="placement-circle"></div>
+    <div id="placement-readout">—</div>
+  </div>
+
+  <div id="editor-controls">
+    <button class="editor-btn" id="editor-findme-btn" title="Find me">◎</button>
+    <button class="editor-btn" id="editor-add-btn" title="Place circle">+</button>
+  </div>
+
+  <div id="editor-panel">
+    <div class="panel-handle-bar"></div>
+    <div class="panel-body">
+
+      <div class="prop-section">Circle</div>
+      <div class="prop-row">
+        <span class="prop-label">Name</span>
+        <input id="prop-name" class="prop-input" type="text" autocomplete="off" autocorrect="off" spellcheck="false" />
+      </div>
+      <div class="prop-row">
+        <span class="prop-label">Radius (m)</span>
+        <input id="prop-radius" class="prop-input" type="number" min="1" />
+      </div>
+      <div class="prop-row">
+        <span class="prop-label">Priority</span>
+        <input id="prop-priority" class="prop-input" type="number" min="0" />
+      </div>
+      <div class="prop-row">
+        <span class="prop-label">Repeat</span>
+        <input id="prop-repeat" class="prop-input" type="number" min="0" />
+      </div>
+      <div class="prop-row">
+        <span class="prop-label">Whisper</span>
+        <input id="prop-whisper" class="prop-input mono" type="text" placeholder="audio/filename.m4a"
+               autocomplete="off" autocorrect="off" spellcheck="false" />
+      </div>
+      <div class="prop-row">
+        <span class="prop-label">Visible</span>
+        <button class="prop-toggle on" id="prop-visible" aria-label="Visible by default"></button>
+      </div>
+
+      <div class="prop-section">When visited</div>
+      <div id="panel-actions-list" class="panel-empty">None</div>
+      <button class="panel-add-btn">+ Add action</button>
+
+      <div class="prop-section">Becomes visible when</div>
+      <div id="panel-visible-conds" class="panel-empty">None</div>
+      <button class="panel-add-btn">+ Add condition</button>
+
+      <div class="prop-section">Becomes hidden when</div>
+      <div id="panel-hide-conds" class="panel-empty">None</div>
+      <button class="panel-add-btn">+ Add condition</button>
+
+      <button id="panel-delete-btn">Delete circle</button>
+    </div>
   </div>
 
   <!-- Leaflet JS -->
@@ -281,7 +586,8 @@
     // Visible only when the URL contains ?debug=true. All logging runs regardless;
     // it just writes to a hidden element in production.
     const debugEl   = document.getElementById('debug-log');
-    const DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === 'true';
+    const DEBUG_MODE  = new URLSearchParams(window.location.search).get('debug')  === 'true';
+    const EDITOR_MODE = new URLSearchParams(window.location.search).get('editor') === 'true';
     if (DEBUG_MODE) debugEl.style.display = 'block';
 
     const debugLines = [];
@@ -655,6 +961,222 @@
 
     // Render inventory immediately so startPresent items appear before Tap to Start
     renderInventory();
+
+    // ==========================================================================
+    // EDITOR MODE
+    // Activated when URL contains ?editor=true. Shares the same map and engine.
+    // All editor state and interactions are enclosed here — play mode is entirely
+    // unaffected when EDITOR_MODE is false.
+    // ==========================================================================
+    if (EDITOR_MODE) {
+      const PLACEMENT_RADIUS_PX = 80; // fixed pixel radius of the placement preview circle
+
+      let placementActive    = false;
+      let selectedCircleName = null;
+
+      const crossIcon = L.divIcon({
+        className:  'cross-icon',
+        iconSize:   [20, 20],
+        iconAnchor: [10, 10],
+        html:       '<div class="cross-icon-inner"><div class="cross-h"></div><div class="cross-v"></div></div>',
+      });
+
+      // Show editor chrome
+      document.body.classList.add('editor');
+      document.getElementById('editor-header').style.display  = 'flex';
+      document.getElementById('editor-controls').style.display = 'flex';
+      document.getElementById('editor-panel').style.display   = 'block';
+
+      // Wire up existing circles
+      CIRCLE_DEFS.forEach(def => addEditorToCircle(def.name));
+
+      // Deselect on bare map tap
+      map.on('click', () => { if (!placementActive) deselectCircle(); });
+
+      // Keep placement readout current as map moves
+      map.on('move zoom', updatePlacementReadout);
+
+      // + button: enter placement mode or confirm placement
+      document.getElementById('editor-add-btn').addEventListener('click', () => {
+        placementActive ? confirmPlacement() : enterPlacementMode();
+      });
+
+      // Find-me button
+      document.getElementById('editor-findme-btn').addEventListener('click', () => {
+        if (playerMarker) map.setView(playerMarker.getLatLng(), 17);
+      });
+
+      // Panel: live-update circle properties as the user types/changes values
+      document.getElementById('prop-name').addEventListener('input', function () {
+        if (!selectedCircleName) return;
+        const newName = this.value.trim();
+        if (!newName || newName === selectedCircleName) return;
+        if (CIRCLE_DEFS.find(d => d.name === newName)) return; // collision — ignore
+        const rt = circleRuntime[selectedCircleName];
+        rt.def.name = newName;
+        circleRuntime[newName] = rt;
+        delete circleRuntime[selectedCircleName];
+        selectedCircleName = newName;
+      });
+
+      document.getElementById('prop-radius').addEventListener('input', function () {
+        if (!selectedCircleName) return;
+        const r = parseFloat(this.value);
+        if (!r || r <= 0) return;
+        const rt = circleRuntime[selectedCircleName];
+        rt.def.radius = r;
+        rt.leafletCircle.setRadius(r);
+      });
+
+      document.getElementById('prop-priority').addEventListener('input', function () {
+        if (!selectedCircleName) return;
+        circleRuntime[selectedCircleName].def.priority = parseInt(this.value) || 50;
+      });
+
+      document.getElementById('prop-repeat').addEventListener('input', function () {
+        if (!selectedCircleName) return;
+        circleRuntime[selectedCircleName].def.repeat = parseInt(this.value) || 1;
+      });
+
+      document.getElementById('prop-whisper').addEventListener('input', function () {
+        if (!selectedCircleName) return;
+        circleRuntime[selectedCircleName].def.whisper = this.value.trim();
+      });
+
+      document.getElementById('prop-visible').addEventListener('click', function () {
+        if (!selectedCircleName) return;
+        const rt   = circleRuntime[selectedCircleName];
+        const nowOn = !this.classList.contains('on');
+        this.classList.toggle('on', nowOn);
+        rt.def.visible = nowOn;
+        // Immediately reflect on map for static-visibility circles
+        if (!rt.def.visibleConditions?.length && !rt.def.hideConditions?.length) {
+          if (nowOn && !rt.onMap) { rt.leafletCircle.addTo(map); rt.onMap = true; }
+          if (!nowOn && rt.onMap) { map.removeLayer(rt.leafletCircle); rt.onMap = false; }
+        }
+      });
+
+      // Delete circle
+      document.getElementById('panel-delete-btn').addEventListener('click', () => {
+        if (!selectedCircleName) return;
+        const name = selectedCircleName;
+        const rt   = circleRuntime[name];
+        if (rt.onMap)       map.removeLayer(rt.leafletCircle);
+        if (rt.centerMarker) map.removeLayer(rt.centerMarker);
+        CIRCLE_DEFS.splice(CIRCLE_DEFS.findIndex(d => d.name === name), 1);
+        delete circleRuntime[name];
+        selectedCircleName = null;
+        closePanel();
+      });
+
+      // ---- Editor helper functions ----
+
+      const addEditorToCircle = (name) => {
+        const rt = circleRuntime[name];
+        if (!rt) return;
+        const marker = L.marker([rt.def.lat, rt.def.lng], {
+          icon: crossIcon, interactive: true, zIndexOffset: 500,
+        }).addTo(map);
+        rt.centerMarker = marker;
+        const onTap = e => { L.DomEvent.stopPropagation(e); selectCircle(name); };
+        rt.leafletCircle.on('click', onTap);
+        marker.on('click', onTap);
+      };
+
+      const selectCircle = (name) => {
+        if (selectedCircleName === name) return;
+        if (selectedCircleName) clearSelection();
+        selectedCircleName = name;
+        circleRuntime[name].leafletCircle.setStyle({ dashArray: '6 4', weight: 3 });
+        openPanel(name);
+      };
+
+      const clearSelection = () => {
+        if (!selectedCircleName) return;
+        const rt = circleRuntime[selectedCircleName];
+        if (rt) rt.leafletCircle.setStyle({ dashArray: null, weight: 2 });
+      };
+
+      const deselectCircle = () => {
+        if (!selectedCircleName) return;
+        clearSelection();
+        selectedCircleName = null;
+        closePanel();
+      };
+
+      const enterPlacementMode = () => {
+        placementActive = true;
+        document.getElementById('editor-add-btn').classList.add('active');
+        document.getElementById('placement-preview').style.display = 'flex';
+        updatePlacementReadout();
+      };
+
+      const updatePlacementReadout = () => {
+        if (!placementActive) return;
+        const center = map.getCenter();
+        const radius = getRadiusForPixels(PLACEMENT_RADIUS_PX);
+        document.getElementById('placement-readout').textContent =
+          `${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}  ·  r = ${Math.round(radius)} m`;
+      };
+
+      const getRadiusForPixels = (px) => {
+        const size     = map.getSize();
+        const centerLL = map.containerPointToLatLng(L.point(size.x / 2, size.y / 2));
+        const edgeLL   = map.containerPointToLatLng(L.point(size.x / 2 + px, size.y / 2));
+        return centerLL.distanceTo(edgeLL);
+      };
+
+      const confirmPlacement = () => {
+        const center = map.getCenter();
+        const radius = Math.round(getRadiusForPixels(PLACEMENT_RADIUS_PX));
+
+        // Unique auto-name
+        let n = 1;
+        while (CIRCLE_DEFS.find(d => d.name === `circle-${n}`)) n++;
+        const name = `circle-${n}`;
+
+        const def = {
+          name, lat: center.lat, lng: center.lng, radius,
+          priority: 50, visible: true, repeat: 1, whisper: '', conditions: [],
+        };
+        CIRCLE_DEFS.push(def);
+
+        const leafletCircle = L.circle([def.lat, def.lng], {
+          radius, color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE,
+          fillOpacity: 0.15, weight: 2,
+        }).addTo(map);
+
+        circleRuntime[name] = {
+          def, leafletCircle, state: 'passive', inRange: false, visited: 0, onMap: true,
+          activeGain: null, activeSource: null, playsRemaining: 0,
+        };
+
+        // Exit placement mode
+        placementActive = false;
+        document.getElementById('editor-add-btn').classList.remove('active');
+        document.getElementById('placement-preview').style.display = 'none';
+
+        addEditorToCircle(name);
+        selectCircle(name);
+      };
+
+      const openPanel = (name) => {
+        const def = circleRuntime[name].def;
+        document.getElementById('prop-name').value     = def.name;
+        document.getElementById('prop-radius').value   = def.radius;
+        document.getElementById('prop-priority').value = def.priority ?? 50;
+        document.getElementById('prop-repeat').value   = def.repeat ?? 1;
+        document.getElementById('prop-whisper').value  = def.whisper ?? '';
+        document.getElementById('prop-visible').classList.toggle('on', def.visible !== false);
+        // Force a layout tick so the transition plays from translateY(100%)
+        document.getElementById('editor-panel').getBoundingClientRect();
+        document.getElementById('editor-panel').classList.add('open');
+      };
+
+      const closePanel = () => {
+        document.getElementById('editor-panel').classList.remove('open');
+      };
+    }
 
     // --- Service Worker registration ---
     if ('serviceWorker' in navigator) {

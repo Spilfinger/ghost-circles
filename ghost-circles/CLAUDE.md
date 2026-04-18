@@ -19,9 +19,9 @@ Engine with full proximity detection, audio playback, lock/unlock and re-lock pr
 - `repeat` property per circle: `1` = play whisper once on entry (default), `0` = loop continuously until exit, `N` = play N times in sequence
 - All audio routes through a GainNode so exit fades work correctly for both looping and sequential playback
 - On exit (active → passive): whisper audio fades out over 1 second, then stops. No-op if audio already finished naturally
-- **Player inventory**: `PLAYER_ITEMS` array defines items (name, icon emoji, audio, startPresent). Present items shown as a row of emoji buttons below the version pill. Tapping plays description audio if one exists. `PLAYER_ITEMS` is empty in the base release
-- `inventoryActions` on circles: optional array of `{ type: "add" | "remove", item: <name> }` actions that fire on passive → active
-- Condition types: `visited`, `hasItem`, `isActive` — all work in both `conditions` and `lockConditions`
+- **Player inventory**: `PLAYER_ITEMS` array defines items (name, icon emoji, quantity, startPresent, audio). Each item has an integer quantity. The icon is rendered once per unit of quantity (3 hearts = ❤️❤️❤️). An item is considered present when quantity > 0. `playerInventory` is a plain object mapping item name → current quantity
+- `inventoryActions` on circles: optional array of actions that fire on passive → active. `{ type: "add", item }` increments quantity by 1; `{ type: "remove", item }` decrements by 1 (minimum 0)
+- Condition types (work in both `conditions` and `lockConditions`): `visited`, `hasItem` (qty > 0), `isActive`, `itemQuantity` (supports `min` and/or `max` against current quantity)
 - "Tap to Start" full-screen overlay — required to unlock iOS audio and GPS simultaneously
 - Web Audio API for audio playback; all whisper and item audio files pre-loaded at startup in parallel
 - Screen Wake Lock: requested after tap-to-start, reacquired automatically on return from background
@@ -44,8 +44,9 @@ ghost-circles/
   audio/
     trigger.m4a       — whisper for lindevej-a
     youfoundit.m4a    — whisper for lindevej-b
-    goal.m4a          — whisper for goal (bullseye inner circle)
-    near.m4a          — whisper for near (bullseye outer circle)
+    near.m4a          — whisper for near
+    goal.m4a          — whisper for goal
+    ohno.m4a          — whisper for ohno
 ```
 
 ## Naming Conventions
@@ -68,13 +69,13 @@ ghost-circles/
 | Active | Green | `#2e7d32` |
 
 ### Code conventions
-- `PLAYER_ITEMS` — array of item definition objects (name, icon, audio, startPresent)
-- `playerInventory` — `Set<string>` of item names currently held by the player
-- `renderInventory()` — re-renders the inventory row from `playerInventory`; called at startup and after any inventory change
+- `PLAYER_ITEMS` — array of item definition objects (name, icon, quantity, startPresent, audio)
+- `playerInventory` — plain object mapping item name → current quantity; item is present when quantity > 0
+- `renderInventory()` — re-renders the inventory row (icon rendered once per quantity unit); called at startup and after any inventory change
 - `playItemAudio(item)` — plays an item's description audio once via Web Audio API
 - `CIRCLE_DEFS` — array of circle definition objects (name, lat, lng, radius, priority, visible, repeat, whisper, conditions, lockConditions?, inventoryActions?)
 - `circleRuntime` — object keyed by name: `{ def, leafletCircle, state, inRange, visited, onMap, activeGain, activeSource, playsRemaining }`
-- `evaluateCondition(cond)` — evaluates a single condition object; supports `visited`, `hasItem`, `isActive`
+- `evaluateCondition(cond)` — evaluates a single condition object; supports `visited`, `hasItem`, `isActive`, `itemQuantity`
 - `evaluateConditions(def)` — returns true if ALL unlock conditions are satisfied (uses `evaluateCondition`)
 - `evaluateLockConditions(def)` — returns true if ANY lock condition is met (uses `evaluateCondition`)
 - `checkUnlocks(userLatLng)` — promotes any locked circle whose conditions are now met to passive; pre-sets `inRange`; returns true if anything was promoted
@@ -104,9 +105,11 @@ ghost-circles/
      // inventoryActions: [],          // optional — [{ type: 'add'|'remove', item: <name> }]
    }
    // Condition types (work in both conditions and lockConditions):
-   // { type: 'visited',  circle: <name>, minTimes: <n> }
-   // { type: 'hasItem',  item: <name> }
-   // { type: 'isActive', circle: <name> }
+   // { type: 'visited',      circle: <name>, minTimes: <n> }
+   // { type: 'hasItem',      item: <name> }                    — quantity > 0
+   // { type: 'isActive',     circle: <name> }
+   // { type: 'itemQuantity', item: <name>, min: <n> }          — quantity ≥ n
+   // { type: 'itemQuantity', item: <name>, max: <n> }          — quantity ≤ n
    ```
 2. Place the `.m4a` file in `audio/`
 3. No other code changes needed
@@ -115,9 +118,9 @@ ghost-circles/
 
 1. Add an entry to `PLAYER_ITEMS` in `index.html`:
    ```js
-   { name: 'my-item', icon: '🔮', audio: null, startPresent: false }
+   { name: 'my-item', icon: '🔮', quantity: 1, startPresent: false, audio: null }
    ```
-   Set `audio` to a file path (e.g. `'audio/myitem.m4a'`) if the item has a description audio; otherwise `null`.
+   `quantity` is the starting amount. The icon is rendered once per unit. Set `audio` to a file path if the item has description audio; otherwise `null`.
 2. If the item has audio, place the `.m4a` file in `audio/`
 3. No other code changes needed — `renderInventory()` picks it up automatically
 

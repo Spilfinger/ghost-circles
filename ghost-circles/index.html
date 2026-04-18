@@ -131,14 +131,18 @@
     }).addTo(map);
 
     // --- Player items ---
-    // Each item: name (internal key), icon (emoji), audio (file path or null),
-    // startPresent (true = in inventory at game start).
-    const PLAYER_ITEMS = [];
+    // Each item: name (internal key), icon (emoji), quantity (integer), audio (file path or null),
+    // startPresent (true = in inventory at game start with the given quantity).
+    // An item is considered present when its quantity is > 0.
+    const PLAYER_ITEMS = [
+      { name: 'heart', icon: '❤️', quantity: 3, startPresent: true, audio: null },
+    ];
 
-    // Live inventory: Set of item names currently held by the player.
-    const playerInventory = new Set(
-      PLAYER_ITEMS.filter(i => i.startPresent).map(i => i.name)
-    );
+    // Live inventory: maps item name → current quantity.
+    const playerInventory = {};
+    PLAYER_ITEMS.forEach(item => {
+      playerInventory[item.name] = item.startPresent ? item.quantity : 0;
+    });
 
     // --- Circle colours ---
     const COLOR_LOCKED  = '#9e9e9e';  // grey  — locked, conditions not yet met
@@ -146,59 +150,49 @@
     const COLOR_ACTIVE  = '#2e7d32';  // green — player is currently inside
 
     // --- Circle definitions ---
-    // conditions:      all must be true for this circle to unlock (locked → passive).
-    // lockConditions:  any one being true re-locks this circle (passive/active → locked).
+    // conditions:      ALL must be true to unlock (locked → passive).
+    // lockConditions:  ANY one being true re-locks (passive/active → locked).
     // Supported condition types for both arrays:
-    //   { type: "visited",  circle: <name>, minTimes: <n> }  — circle visited ≥ n times
-    //   { type: "hasItem",  item: <name> }                   — item is in player inventory
-    //   { type: "isActive", circle: <name> }                 — circle is currently active
+    //   { type: "visited",      circle: <name>, minTimes: <n> }  — circle visited ≥ n times
+    //   { type: "hasItem",      item: <name> }                   — item quantity > 0
+    //   { type: "isActive",     circle: <name> }                 — circle is currently active
+    //   { type: "itemQuantity", item: <name>, min: <n> }         — quantity ≥ n
+    //   { type: "itemQuantity", item: <name>, max: <n> }         — quantity ≤ n
     const CIRCLE_DEFS = [
-      // --- Lindevej circles (locked for this test build) ---
-      {
-        name:       'lindevej-a',
-        lat:        55.9933,
-        lng:        12.5500,
-        radius:     50,
-        priority:   50,
-        visible:    false,
-        repeat:     1,
-        whisper:    'audio/trigger.m4a',
-        conditions: [{ type: 'visited', circle: 'goal', minTimes: 999 }], // test lock
-      },
-      {
-        name:       'lindevej-b',
-        lat:        55.9942,
-        lng:        12.5503,
-        radius:     40,
-        priority:   50,
-        visible:    false,
-        repeat:     3,
-        whisper:    'audio/youfoundit.m4a',
-        conditions: [{ type: 'visited', circle: 'lindevej-a', minTimes: 1 }],
-      },
-      // --- Bullseye test circles ---
-      {
-        name:           'goal',
-        lat:            55.9936,
-        lng:            12.5504,
-        radius:         5,
-        priority:       60,
-        visible:        true,
-        repeat:         1,
-        whisper:        'audio/goal.m4a',
-        conditions:     [],
-      },
       {
         name:           'near',
         lat:            55.9936,
         lng:            12.5504,
-        radius:         15,
+        radius:         25,
         priority:       50,
         visible:        true,
         repeat:         0,
         whisper:        'audio/near.m4a',
-        conditions:     [],
-        lockConditions: [{ type: 'visited', circle: 'goal', minTimes: 1 }],
+        conditions:     [{ type: 'itemQuantity', item: 'heart', min: 1 }],
+        lockConditions: [{ type: 'isActive', circle: 'goal' }],
+      },
+      {
+        name:             'goal',
+        lat:              55.9936,
+        lng:              12.5504,
+        radius:           10,
+        priority:         60,
+        visible:          true,
+        repeat:           1,
+        whisper:          'audio/goal.m4a',
+        conditions:       [],
+        inventoryActions: [{ type: 'remove', item: 'heart' }],
+      },
+      {
+        name:       'ohno',
+        lat:        55.9936,
+        lng:        12.5504,
+        radius:     35,
+        priority:   80,
+        visible:    true,
+        repeat:     1,
+        whisper:    'audio/ohno.m4a',
+        conditions: [{ type: 'itemQuantity', item: 'heart', max: 0 }],
       },
     ];
 
@@ -215,7 +209,8 @@
     const circleRuntime = {};
 
     CIRCLE_DEFS.forEach(def => {
-      const state = def.conditions.length === 0 ? 'passive' : 'locked';
+      // evaluateConditions is hoisted (function declaration), so safe to call here.
+      const state = evaluateConditions(def) ? 'passive' : 'locked';
       const color = state === 'locked' ? COLOR_LOCKED : COLOR_PASSIVE;
 
       // Always create the Leaflet circle object so state transitions work normally,
@@ -240,9 +235,15 @@
     // Evaluate a single condition object. Used by both evaluateConditions and
     // evaluateLockConditions so all condition types are defined in one place.
     function evaluateCondition(cond) {
-      if (cond.type === 'visited')  return (circleRuntime[cond.circle]?.visited ?? 0) >= cond.minTimes;
-      if (cond.type === 'hasItem')  return playerInventory.has(cond.item);
-      if (cond.type === 'isActive') return circleRuntime[cond.circle]?.state === 'active';
+      if (cond.type === 'visited')      return (circleRuntime[cond.circle]?.visited ?? 0) >= cond.minTimes;
+      if (cond.type === 'hasItem')      return (playerInventory[cond.item] ?? 0) > 0;
+      if (cond.type === 'isActive')     return circleRuntime[cond.circle]?.state === 'active';
+      if (cond.type === 'itemQuantity') {
+        const qty = playerInventory[cond.item] ?? 0;
+        if (cond.min !== undefined && qty < cond.min) return false;
+        if (cond.max !== undefined && qty > cond.max) return false;
+        return true;
+      }
       return false;
     }
 
@@ -416,14 +417,16 @@
       const el = document.getElementById('inventory');
       el.innerHTML = '';
       PLAYER_ITEMS.forEach(item => {
-        if (!playerInventory.has(item.name)) return;
-        const btn = document.createElement('button');
-        btn.className   = 'inventory-item';
-        btn.textContent = item.icon;
-        if (item.audio) {
-          btn.addEventListener('click', () => playItemAudio(item));
+        const qty = playerInventory[item.name] ?? 0;
+        for (let i = 0; i < qty; i++) {
+          const btn = document.createElement('button');
+          btn.className   = 'inventory-item';
+          btn.textContent = item.icon;
+          if (item.audio) {
+            btn.addEventListener('click', () => playItemAudio(item));
+          }
+          el.appendChild(btn);
         }
-        el.appendChild(btn);
       });
     }
 
@@ -543,8 +546,12 @@
           // Apply inventory actions defined on this circle
           if (def.inventoryActions) {
             def.inventoryActions.forEach(action => {
-              if (action.type === 'add')    playerInventory.add(action.item);
-              if (action.type === 'remove') playerInventory.delete(action.item);
+              if (action.type === 'add') {
+                playerInventory[action.item] = (playerInventory[action.item] ?? 0) + 1;
+              }
+              if (action.type === 'remove') {
+                playerInventory[action.item] = Math.max(0, (playerInventory[action.item] ?? 0) - 1);
+              }
             });
             renderInventory();
           }

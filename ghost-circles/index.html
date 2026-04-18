@@ -197,7 +197,9 @@
         weight:      2,
       });
 
-      const onMap = def.visible !== false;
+      // Circles with visibleConditions start hidden — Pass 5 adds them when conditions are met.
+      // Otherwise use the static visible property (default true).
+      const onMap = def.visibleConditions?.length ? false : def.visible !== false;
       if (onMap) leafletCircle.addTo(map);
 
       circleRuntime[def.name] = {
@@ -232,8 +234,25 @@
       return def.lockConditions.some(cond => evaluateCondition(cond));
     }
 
+    // Returns whether a circle should currently be visible on the map.
+    // visibleConditions: starts hidden, shown when ALL are met.
+    // hideConditions:    starts visible, hidden when ALL are met.
+    // If neither is defined, falls back to the static visible property (default true).
+    function computeVisibility(def) {
+      if (!def.visibleConditions?.length && !def.hideConditions?.length) {
+        return def.visible !== false;
+      }
+      let show = true;
+      if (def.visibleConditions?.length) {
+        show = def.visibleConditions.every(cond => evaluateCondition(cond));
+      }
+      if (show && def.hideConditions?.length) {
+        show = !def.hideConditions.every(cond => evaluateCondition(cond));
+      }
+      return show;
+    }
+
     // Re-evaluate all locked circles and unlock any whose conditions are now met.
-    // Unlocking also makes the circle visible on the map if it wasn't already.
     // userLatLng is the player's current position — used to pre-compute inRange on
     // newly promoted circles so a re-run of checkProximity can detect them immediately.
     // Returns true if any circle was promoted (signals that a re-run is needed).
@@ -244,7 +263,9 @@
         if (rt.state === 'locked' && evaluateConditions(def)) {
           rt.state = 'passive';
           rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
-          if (!rt.onMap) {
+          // Map visibility on unlock: only for circles without dynamic visibility conditions.
+          // Circles with visibleConditions or hideConditions are managed exclusively by Pass 5.
+          if (!rt.onMap && !def.visibleConditions?.length && !def.hideConditions?.length && def.visible !== false) {
             rt.leafletCircle.addTo(map);
             rt.onMap = true;
           }
@@ -564,6 +585,23 @@
           rt.state   = 'passive';
           rt.inRange = userLatLng.distanceTo(L.latLng(def.lat, def.lng)) <= def.radius;
           rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
+        }
+      });
+
+      // Pass 5: update map visibility for circles with dynamic visibility conditions.
+      // visibleConditions: circle appears when ALL are met.
+      // hideConditions:    circle disappears when ALL are met.
+      // Circles with neither are unaffected here — their visibility is static.
+      CIRCLE_DEFS.forEach(def => {
+        if (!def.visibleConditions?.length && !def.hideConditions?.length) return;
+        const rt = circleRuntime[def.name];
+        const shouldBeVisible = computeVisibility(def);
+        if (shouldBeVisible && !rt.onMap) {
+          rt.leafletCircle.addTo(map);
+          rt.onMap = true;
+        } else if (!shouldBeVisible && rt.onMap) {
+          map.removeLayer(rt.leafletCircle);
+          rt.onMap = false;
         }
       });
     }

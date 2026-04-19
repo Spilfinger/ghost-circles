@@ -857,7 +857,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.19</div>
+  <div id="version">v3.20</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1049,19 +1049,7 @@
     //   { type: "isActive",     circle: <name> }                 — circle is currently active
     //   { type: "itemQuantity", item: <name>, min: <n> }         — quantity ≥ n
     //   { type: "itemQuantity", item: <name>, max: <n> }         — quantity ≤ n
-    const CIRCLE_DEFS = [
-      {
-        name:       'near',
-        lat:        55.9936,
-        lng:        12.5504,
-        radius:     25,
-        priority:   50,
-        visible:    true,
-        repeat:     1,
-        whisper:    'near.m4a',
-        conditions: [],
-      },
-    ];
+    const CIRCLE_DEFS = [];
 
     // --- Haunt URL loading (play mode only) ---
     // If a ?haunt= parameter is present, decode and decompress the haunt JSON and

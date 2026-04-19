@@ -10,6 +10,9 @@
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
+  <!-- LZString — used to compress haunt JSON into shareable play URLs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+
   <style>
     * {
       margin: 0;
@@ -551,12 +554,147 @@
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
     }
+
+    /* Export haunt button — in the editor header */
+    #export-haunt-btn {
+      background: rgba(255, 255, 255, 0.13);
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      border-radius: 14px;
+      color: #fff;
+      font-size: 12px;
+      font-family: system-ui, sans-serif;
+      font-weight: 600;
+      padding: 4px 10px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* Export modal */
+    #export-modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 1005;
+    }
+    #export-modal-backdrop.open { display: block; }
+
+    #export-modal {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      max-height: 75vh;
+      background: #1c1c1e;
+      border-radius: 16px 16px 0 0;
+      z-index: 1006;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #export-modal.open { display: flex; }
+
+    #export-modal-header {
+      display: flex;
+      align-items: center;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      flex-shrink: 0;
+    }
+    #export-modal-title {
+      flex: 1;
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+    }
+    #export-modal-close {
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 4px 6px;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #export-modal-body {
+      padding: 16px 16px calc(32px + env(safe-area-inset-bottom));
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      font-family: system-ui, sans-serif;
+    }
+
+    .export-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.38);
+      margin: 0 0 8px;
+    }
+    .export-label + .export-label { margin-top: 20px; }
+
+    #export-url-input {
+      display: block;
+      width: 100%;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 12px;
+      font-family: monospace;
+      padding: 10px 12px;
+      outline: none;
+      resize: none;
+      overflow-x: auto;
+      white-space: nowrap;
+      cursor: text;
+      margin-bottom: 10px;
+    }
+
+    #export-copy-btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      background: #1565C0;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: system-ui, sans-serif;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      margin-bottom: 4px;
+      transition: background 0.15s;
+    }
+    #export-copy-btn.copied { background: #2e7d32; }
+
+    .export-audio-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.72);
+    }
+    .export-audio-row:last-child { border-bottom: none; }
+
+    .export-audio-icon {
+      font-size: 15px;
+      width: 18px;
+      text-align: center;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
 
   <div id="map"></div>
-  <div id="version">v3.17</div>
+  <div id="version">v3.18</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -569,7 +707,24 @@
     <span class="eh-label">Editor —</span>
     <span id="haunt-name" contenteditable="true" spellcheck="false">New Haunt</span>
     <span id="draft-saved-flash">Draft saved</span>
+    <button id="export-haunt-btn">Export</button>
     <button id="clear-draft-btn">Clear draft</button>
+  </div>
+
+  <!-- Export modal -->
+  <div id="export-modal-backdrop"></div>
+  <div id="export-modal">
+    <div id="export-modal-header">
+      <span id="export-modal-title">Export haunt</span>
+      <button id="export-modal-close" aria-label="Close">✕</button>
+    </div>
+    <div id="export-modal-body">
+      <p class="export-label">Play URL</p>
+      <input id="export-url-input" type="text" readonly />
+      <button id="export-copy-btn">Copy to clipboard</button>
+      <p class="export-label">Required audio files</p>
+      <div id="export-audio-list"></div>
+    </div>
   </div>
 
   <div id="placement-preview">
@@ -726,6 +881,27 @@
         conditions: [],
       },
     ];
+
+    // --- Haunt URL loading (play mode only) ---
+    // If a ?haunt= parameter is present, decode and decompress the haunt JSON and
+    // use its circles array instead of the hardcoded CIRCLE_DEFS.
+    // Editor mode ignores this — it always works from the local draft.
+    if (!EDITOR_MODE) {
+      const _hauntParam = new URLSearchParams(window.location.search).get('haunt');
+      if (_hauntParam && typeof LZString !== 'undefined') {
+        try {
+          const _hauntJson = LZString.decompressFromEncodedURIComponent(_hauntParam);
+          const _haunt     = JSON.parse(_hauntJson);
+          if (_haunt.circles?.length) {
+            CIRCLE_DEFS.length = 0;
+            _haunt.circles.forEach(c => CIRCLE_DEFS.push(c));
+          }
+          if (_haunt.metadata?.title) {
+            document.title = _haunt.metadata.title;
+          }
+        } catch(e) { /* malformed param — fall through to hardcoded CIRCLE_DEFS */ }
+      }
+    }
 
     // --- Draft loading (editor only) ---
     // Read once here so it can be used both to populate CIRCLE_DEFS and, later,
@@ -1235,6 +1411,9 @@
     // ==========================================================================
     if (EDITOR_MODE) {
       const PLACEMENT_RADIUS_PX = 80; // fixed pixel radius of the placement preview circle
+
+      // Short random ID for haunt identity (generated once, persisted in draft).
+      const generateId = () => Math.random().toString(36).slice(2, 9);
 
       let placementActive    = false;
       let repositionActive   = false; // true while the reposition preview is shown
@@ -1803,6 +1982,20 @@
         saveDraft();
       };
 
+      // ---- Haunt metadata ----
+      // Initialized from the existing draft if present, otherwise created fresh.
+      // Persisted in every saveDraft call so it survives page reloads.
+
+      const _now = new Date().toISOString();
+      let _hauntMeta = _editorDraft?.metadata ?? {
+        id:       generateId(),
+        title:    _editorDraft?.hauntName || 'New Haunt',
+        author:   '',
+        version:  1,
+        created:  _now,
+        modified: _now,
+      };
+
       // ---- Autosave ----
 
       let _saveFlashTimer = null;
@@ -1814,10 +2007,13 @@
       };
 
       const saveDraft = () => {
-        const hauntName = document.getElementById('haunt-name').textContent.trim();
+        const title = document.getElementById('haunt-name').textContent.trim();
+        _hauntMeta.title    = title;
+        _hauntMeta.modified = new Date().toISOString();
         try {
           localStorage.setItem(DRAFT_KEY, JSON.stringify({
-            hauntName,
+            metadata: { ..._hauntMeta },
+            hauntName: title,              // kept for backward compatibility
             circles: CIRCLE_DEFS.map(def => ({ ...def })),
           }));
           showSavedFlash();
@@ -1829,6 +2025,81 @@
       const saveDraftDebounced = () => {
         clearTimeout(_saveDraftTimer);
         _saveDraftTimer = setTimeout(saveDraft, 600);
+      };
+
+      // ---- Export ----
+
+      const closeExportModal = () => {
+        document.getElementById('export-modal').classList.remove('open');
+        document.getElementById('export-modal-backdrop').classList.remove('open');
+      };
+
+      const exportHaunt = async () => {
+        // Increment version and sync title before building the payload
+        _hauntMeta.version++;
+        _hauntMeta.title    = document.getElementById('haunt-name').textContent.trim();
+        _hauntMeta.modified = new Date().toISOString();
+
+        const audioFiles = [...new Set(CIRCLE_DEFS.map(d => d.whisper).filter(Boolean))];
+
+        const hauntObj = {
+          metadata: { ..._hauntMeta },
+          circles:  CIRCLE_DEFS.map(def => ({ ...def })),
+          items:    [],
+          audio:    audioFiles,
+        };
+
+        const encoded = LZString.compressToEncodedURIComponent(JSON.stringify(hauntObj));
+        const playURL = `${window.location.origin}${window.location.pathname}?haunt=${encoded}`;
+
+        // Persist the incremented version to the draft
+        saveDraft();
+
+        // Populate and show the modal
+        document.getElementById('export-modal-title').textContent =
+          `${_hauntMeta.title} — v${_hauntMeta.version}`;
+        const urlInput = document.getElementById('export-url-input');
+        urlInput.value = playURL;
+
+        const copyBtn = document.getElementById('export-copy-btn');
+        copyBtn.textContent = 'Copy to clipboard';
+        copyBtn.classList.remove('copied');
+
+        document.getElementById('export-modal').classList.add('open');
+        document.getElementById('export-modal-backdrop').classList.add('open');
+
+        // Audio file checklist — HEAD-fetch each file to verify it's present
+        const listEl = document.getElementById('export-audio-list');
+        listEl.innerHTML = '';
+        if (audioFiles.length === 0) {
+          const p = document.createElement('p');
+          p.className   = 'panel-empty';
+          p.textContent = 'No audio files referenced by any circle';
+          listEl.appendChild(p);
+          return;
+        }
+        audioFiles.forEach(file => {
+          const row  = document.createElement('div');
+          row.className = 'export-audio-row';
+          const icon = document.createElement('span');
+          icon.className   = 'export-audio-icon';
+          icon.textContent = '…';
+          const label = document.createElement('span');
+          label.textContent = file;
+          row.appendChild(icon);
+          row.appendChild(label);
+          listEl.appendChild(row);
+
+          fetch(file, { method: 'HEAD' })
+            .then(r => {
+              icon.textContent = r.ok ? '✓' : '✗';
+              icon.style.color = r.ok ? '#66bb6a' : '#e53935';
+            })
+            .catch(() => {
+              icon.textContent = '✗';
+              icon.style.color = '#e53935';
+            });
+        });
       };
 
       // ---- Setup ----
@@ -1995,6 +2266,31 @@
       // Reposition confirm / cancel
       document.getElementById('reposition-confirm-btn').addEventListener('click', () => confirmReposition());
       document.getElementById('reposition-cancel-btn').addEventListener('click',  () => cancelReposition());
+
+      // Export haunt
+      document.getElementById('export-haunt-btn').addEventListener('click', () => exportHaunt());
+      document.getElementById('export-modal-close').addEventListener('click', () => closeExportModal());
+      document.getElementById('export-modal-backdrop').addEventListener('click', () => closeExportModal());
+      document.getElementById('export-copy-btn').addEventListener('click', function () {
+        const val = document.getElementById('export-url-input').value;
+        navigator.clipboard?.writeText(val).then(() => {
+          this.textContent = 'Copied!';
+          this.classList.add('copied');
+          setTimeout(() => {
+            this.textContent = 'Copy to clipboard';
+            this.classList.remove('copied');
+          }, 2000);
+        }).catch(() => {
+          // Fallback: select the input text so the user can copy manually
+          const inp = document.getElementById('export-url-input');
+          inp.focus();
+          inp.select();
+        });
+      });
+      document.getElementById('export-url-input').addEventListener('click', function () {
+        this.focus();
+        this.select();
+      });
 
       // Clear draft — removes localStorage entry and reloads to restore hardcoded defaults
       document.getElementById('clear-draft-btn').addEventListener('click', () => {

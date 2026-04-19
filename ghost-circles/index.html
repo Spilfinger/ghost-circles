@@ -380,8 +380,9 @@
       font-size: 13px;
       font-family: system-ui, sans-serif;
       text-align: left;
-      cursor: default;
+      cursor: pointer;
       margin-top: 2px;
+      -webkit-tap-highlight-color: transparent;
     }
 
     #panel-delete-btn {
@@ -555,7 +556,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v3.16</div>
+  <div id="version">v3.17</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -640,6 +641,22 @@
 
       <div class="prop-section">Active conditions</div>
       <div id="panel-conditions-list"></div>
+
+      <div class="prop-section">Becomes unlocked if</div>
+      <div id="panel-cond-conditions"></div>
+      <button class="panel-add-btn" id="panel-add-cond-conditions">+ Add condition</button>
+
+      <div class="prop-section">Becomes locked if</div>
+      <div id="panel-cond-lockConditions"></div>
+      <button class="panel-add-btn" id="panel-add-cond-lockConditions">+ Add condition</button>
+
+      <div class="prop-section">Becomes visible if</div>
+      <div id="panel-cond-visibleConditions"></div>
+      <button class="panel-add-btn" id="panel-add-cond-visibleConditions">+ Add condition</button>
+
+      <div class="prop-section">Becomes hidden if</div>
+      <div id="panel-cond-hideConditions"></div>
+      <button class="panel-add-btn" id="panel-add-cond-hideConditions">+ Add condition</button>
 
       <div class="prop-section">When visited</div>
       <div id="panel-actions-list"></div>
@@ -774,6 +791,10 @@
         if (cond.max !== undefined && qty > cond.max) return false;
         return true;
       }
+      if (cond.type === 'isPassive') return circleRuntime[cond.circle]?.state === 'passive';
+      if (cond.type === 'isLocked')  return circleRuntime[cond.circle]?.state === 'locked';
+      if (cond.type === 'isVisible') return circleRuntime[cond.circle]?.onMap === true;
+      if (cond.type === 'isHidden')  return circleRuntime[cond.circle]?.onMap !== true;
       return false;
     }
 
@@ -1284,6 +1305,10 @@
           if (cond.max !== undefined) parts.push(`${cond.item} ≤ ${cond.max}`);
           return parts.join(' and ');
         }
+        if (cond.type === 'isPassive') return `${cond.circle} is passive`;
+        if (cond.type === 'isLocked')  return `${cond.circle} is locked`;
+        if (cond.type === 'isVisible') return `${cond.circle} is visible on map`;
+        if (cond.type === 'isHidden')  return `${cond.circle} is hidden from map`;
         return JSON.stringify(cond);
       };
 
@@ -1380,15 +1405,20 @@
 
       // ---- Action picker ----
 
-      let _pickerActionKey = null; // arrayKey chosen in step 1
+      let _pickerActionKey   = null; // arrayKey chosen in step 1 (action mode)
+      let _pickerCondArrayKey  = null; // def array being edited (condition mode)
+      let _pickerCondCheckType = null; // 'state' | 'visited' | 'visibility'
+      let _pickerCondTarget    = null; // circle name chosen in step 2 (condition mode)
+      let _pickerMode          = null; // 'action' | 'condition'
 
-      const closeActionPicker = () => {
+      const closePicker = () => {
         pickerActive = false;
+        _pickerMode = null;
         document.getElementById('action-picker').classList.remove('open');
         document.getElementById('picker-backdrop').classList.remove('open');
       };
 
-      const renderPickerStep2 = () => {
+      const renderActionPickerStep2 = () => {
         document.getElementById('action-picker-title').textContent = 'Choose circle';
         const body = document.getElementById('action-picker-body');
         body.innerHTML = '';
@@ -1419,7 +1449,7 @@
                 );
               }
             }
-            closeActionPicker();
+            closePicker();
             renderActions(selectedCircleName);
             saveDraft();
           });
@@ -1430,6 +1460,7 @@
       const openActionPicker = () => {
         if (!selectedCircleName) return;
         pickerActive = true;
+        _pickerMode = 'action';
         _pickerActionKey = null;
         document.getElementById('action-picker-title').textContent = 'Choose action';
         const body = document.getElementById('action-picker-body');
@@ -1440,7 +1471,195 @@
           btn.textContent = label;
           btn.addEventListener('click', () => {
             _pickerActionKey = key;
-            renderPickerStep2();
+            renderActionPickerStep2();
+          });
+          body.appendChild(btn);
+        });
+        document.getElementById('action-picker').classList.add('open');
+        document.getElementById('picker-backdrop').classList.add('open');
+      };
+
+      // ---- Condition editor ----
+
+      // Renders one condition array (e.g. def.conditions) as deletable rows.
+      const renderConditionArray = (circleName, arrayKey) => {
+        const def = circleRuntime[circleName]?.def;
+        const el  = document.getElementById(`panel-cond-${arrayKey}`);
+        if (!def || !el) return;
+        el.innerHTML = '';
+        const arr = def[arrayKey] || [];
+        if (arr.length === 0) {
+          const p = document.createElement('p');
+          p.className   = 'panel-empty';
+          p.textContent = 'None';
+          el.appendChild(p);
+          return;
+        }
+        arr.forEach((cond, idx) => {
+          const row = document.createElement('div');
+          row.className = 'action-row';
+          const lbl = document.createElement('span');
+          lbl.className   = 'action-label';
+          lbl.textContent = describeCondition(cond);
+          const del = document.createElement('button');
+          del.className   = 'action-delete-btn';
+          del.textContent = '✕';
+          del.setAttribute('aria-label', 'Delete condition');
+          del.addEventListener('click', () => {
+            def[arrayKey].splice(idx, 1);
+            renderConditionArray(circleName, arrayKey);
+            renderConditions(circleName);
+            saveDraft();
+          });
+          row.appendChild(lbl);
+          row.appendChild(del);
+          el.appendChild(row);
+        });
+      };
+
+      const renderAllConditionArrays = (name) => {
+        ['conditions', 'lockConditions', 'visibleConditions', 'hideConditions'].forEach(key => {
+          renderConditionArray(name, key);
+        });
+      };
+
+      // ---- Condition picker (3-step) ----
+
+      const renderCondPickerStep3 = () => {
+        const body = document.getElementById('action-picker-body');
+        body.innerHTML = '';
+
+        if (_pickerCondCheckType === 'state') {
+          document.getElementById('action-picker-title').textContent = 'Choose state';
+          [
+            { label: 'Active',  cond: { type: 'isActive',  circle: _pickerCondTarget } },
+            { label: 'Passive', cond: { type: 'isPassive', circle: _pickerCondTarget } },
+            { label: 'Locked',  cond: { type: 'isLocked',  circle: _pickerCondTarget } },
+          ].forEach(({ label, cond }) => {
+            const btn = document.createElement('button');
+            btn.className   = 'picker-option-btn';
+            btn.textContent = `${_pickerCondTarget} is ${label.toLowerCase()}`;
+            btn.addEventListener('click', () => {
+              const def = circleRuntime[selectedCircleName]?.def;
+              if (def) {
+                if (!def[_pickerCondArrayKey]) def[_pickerCondArrayKey] = [];
+                def[_pickerCondArrayKey].push(cond);
+              }
+              closePicker();
+              renderConditionArray(selectedCircleName, _pickerCondArrayKey);
+              renderConditions(selectedCircleName);
+              saveDraft();
+            });
+            body.appendChild(btn);
+          });
+
+        } else if (_pickerCondCheckType === 'visited') {
+          document.getElementById('action-picker-title').textContent = 'Visited at least…';
+          const wrapper = document.createElement('div');
+          wrapper.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0 12px';
+          const input = document.createElement('input');
+          input.type  = 'number';
+          input.min   = '1';
+          input.value = '1';
+          input.className   = 'prop-input';
+          input.style.cssText = 'flex:1;margin:0';
+          const unit = document.createElement('span');
+          unit.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.5);white-space:nowrap';
+          unit.textContent = 'times';
+          wrapper.appendChild(input);
+          wrapper.appendChild(unit);
+          body.appendChild(wrapper);
+
+          const btn = document.createElement('button');
+          btn.className   = 'picker-option-btn';
+          btn.textContent = `Add condition`;
+          btn.addEventListener('click', () => {
+            const n = Math.max(1, parseInt(input.value) || 1);
+            const def = circleRuntime[selectedCircleName]?.def;
+            if (def) {
+              if (!def[_pickerCondArrayKey]) def[_pickerCondArrayKey] = [];
+              def[_pickerCondArrayKey].push({ type: 'visited', circle: _pickerCondTarget, minTimes: n });
+            }
+            closePicker();
+            renderConditionArray(selectedCircleName, _pickerCondArrayKey);
+            renderConditions(selectedCircleName);
+            saveDraft();
+          });
+          body.appendChild(btn);
+
+        } else if (_pickerCondCheckType === 'visibility') {
+          document.getElementById('action-picker-title').textContent = 'Choose visibility';
+          [
+            { label: `${_pickerCondTarget} is visible on map`, cond: { type: 'isVisible', circle: _pickerCondTarget } },
+            { label: `${_pickerCondTarget} is hidden from map`, cond: { type: 'isHidden',  circle: _pickerCondTarget } },
+          ].forEach(({ label, cond }) => {
+            const btn = document.createElement('button');
+            btn.className   = 'picker-option-btn';
+            btn.textContent = label;
+            btn.addEventListener('click', () => {
+              const def = circleRuntime[selectedCircleName]?.def;
+              if (def) {
+                if (!def[_pickerCondArrayKey]) def[_pickerCondArrayKey] = [];
+                def[_pickerCondArrayKey].push(cond);
+              }
+              closePicker();
+              renderConditionArray(selectedCircleName, _pickerCondArrayKey);
+              renderConditions(selectedCircleName);
+              saveDraft();
+            });
+            body.appendChild(btn);
+          });
+        }
+      };
+
+      const renderCondPickerStep2 = () => {
+        document.getElementById('action-picker-title').textContent = 'Choose circle';
+        const body = document.getElementById('action-picker-body');
+        body.innerHTML = '';
+        const others = CIRCLE_DEFS.filter(d => d.name !== selectedCircleName);
+        if (others.length === 0) {
+          const p = document.createElement('p');
+          p.className     = 'panel-empty';
+          p.style.padding = '12px 0';
+          p.textContent   = 'No other circles in this haunt yet';
+          body.appendChild(p);
+          return;
+        }
+        others.forEach(def => {
+          const btn = document.createElement('button');
+          btn.className   = 'picker-option-btn';
+          btn.textContent = def.name;
+          btn.addEventListener('click', () => {
+            _pickerCondTarget = def.name;
+            renderCondPickerStep3();
+          });
+          body.appendChild(btn);
+        });
+      };
+
+      const COND_CHECK_TYPES = [
+        { key: 'state',      label: "Another circle's state" },
+        { key: 'visited',    label: "Another circle's visited count" },
+        { key: 'visibility', label: "Another circle's visibility" },
+      ];
+
+      const openConditionPicker = (arrayKey) => {
+        if (!selectedCircleName) return;
+        pickerActive = true;
+        _pickerMode          = 'condition';
+        _pickerCondArrayKey  = arrayKey;
+        _pickerCondCheckType = null;
+        _pickerCondTarget    = null;
+        document.getElementById('action-picker-title').textContent = 'Choose condition type';
+        const body = document.getElementById('action-picker-body');
+        body.innerHTML = '';
+        COND_CHECK_TYPES.forEach(({ key, label }) => {
+          const btn = document.createElement('button');
+          btn.className   = 'picker-option-btn';
+          btn.textContent = label;
+          btn.addEventListener('click', () => {
+            _pickerCondCheckType = key;
+            renderCondPickerStep2();
           });
           body.appendChild(btn);
         });
@@ -1460,6 +1679,7 @@
         document.getElementById('prop-starts-locked').classList.toggle('on', def.startsLocked === true);
         document.getElementById('prop-hide-in-editor').classList.toggle('on', rt.editorHidden === true);
         renderConditions(name);
+        renderAllConditionArrays(name);
         renderActions(name);
         // Force a layout tick so the CSS transition plays cleanly from translateY(100%)
         document.getElementById('editor-panel').getBoundingClientRect();
@@ -1761,8 +1981,13 @@
 
       // Add action button + picker cancel + backdrop
       document.getElementById('panel-add-action-btn').addEventListener('click', () => openActionPicker());
-      document.getElementById('action-picker-cancel').addEventListener('click', () => closeActionPicker());
-      document.getElementById('picker-backdrop').addEventListener('click', () => closeActionPicker());
+      document.getElementById('action-picker-cancel').addEventListener('click', () => closePicker());
+      document.getElementById('picker-backdrop').addEventListener('click', () => closePicker());
+
+      // Add condition buttons — one per condition array
+      ['conditions', 'lockConditions', 'visibleConditions', 'hideConditions'].forEach(key => {
+        document.getElementById(`panel-add-cond-${key}`).addEventListener('click', () => openConditionPicker(key));
+      });
 
       // Reposition button
       document.getElementById('prop-reposition-btn').addEventListener('click', () => enterRepositionMode());

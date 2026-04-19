@@ -325,6 +325,17 @@
 
     .panel-empty { font-size: 13px; color: rgba(255,255,255,0.24); font-style: italic; padding: 2px 0 6px; }
 
+    .condition-line {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.72);
+      line-height: 1.5;
+      margin-bottom: 6px;
+    }
+    .condition-line strong {
+      color: rgba(255, 255, 255, 0.45);
+      font-weight: 600;
+    }
+
     .panel-add-btn {
       display: block;
       width: 100%;
@@ -418,7 +429,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v3.12</div>
+  <div id="version">v3.13</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -489,17 +500,12 @@
 
       <button id="prop-reposition-btn">Reposition</button>
 
+      <div class="prop-section">Active conditions</div>
+      <div id="panel-conditions-list"></div>
+
       <div class="prop-section">When visited</div>
       <div id="panel-actions-list" class="panel-empty">None</div>
       <button class="panel-add-btn">+ Add action</button>
-
-      <div class="prop-section">Becomes visible when</div>
-      <div id="panel-visible-conds" class="panel-empty">None</div>
-      <button class="panel-add-btn">+ Add condition</button>
-
-      <div class="prop-section">Becomes hidden when</div>
-      <div id="panel-hide-conds" class="panel-empty">None</div>
-      <button class="panel-add-btn">+ Add condition</button>
 
       <button id="panel-delete-btn">Delete circle</button>
     </div>
@@ -1111,6 +1117,48 @@
         }
       };
 
+      // Returns a plain-English fragment describing a single condition object.
+      const describeCondition = (cond) => {
+        if (cond.type === 'visited') {
+          const n = cond.minTimes;
+          return `${cond.circle} visited ${n} or more time${n === 1 ? '' : 's'}`;
+        }
+        if (cond.type === 'hasItem')      return `player has ${cond.item}`;
+        if (cond.type === 'isActive')     return `${cond.circle} is active`;
+        if (cond.type === 'itemQuantity') {
+          const parts = [];
+          if (cond.min !== undefined) parts.push(`${cond.item} ≥ ${cond.min}`);
+          if (cond.max !== undefined) parts.push(`${cond.item} ≤ ${cond.max}`);
+          return parts.join(' and ');
+        }
+        return JSON.stringify(cond);
+      };
+
+      // Rebuilds the Active conditions list for the given circle name.
+      const renderConditions = (name) => {
+        const def = circleRuntime[name]?.def;
+        const el  = document.getElementById('panel-conditions-list');
+        if (!def || !el) return;
+
+        const rows = [];
+        (def.conditions      || []).forEach(c => rows.push(['Unlocked by', describeCondition(c)]));
+        (def.lockConditions   || []).forEach(c => rows.push(['Locked when',  describeCondition(c)]));
+        (def.visibleConditions|| []).forEach(c => rows.push(['Visible when', describeCondition(c)]));
+        (def.hideConditions   || []).forEach(c => rows.push(['Hidden when',  describeCondition(c)]));
+
+        el.innerHTML = '';
+        if (rows.length === 0) {
+          el.innerHTML = '<p class="panel-empty">No conditions — always available</p>';
+        } else {
+          rows.forEach(([prefix, desc]) => {
+            const p = document.createElement('p');
+            p.className = 'condition-line';
+            p.innerHTML = `<strong>${prefix}:</strong> ${desc}`;
+            el.appendChild(p);
+          });
+        }
+      };
+
       const openPanel = (name) => {
         const rt  = circleRuntime[name];
         const def = rt.def;
@@ -1122,6 +1170,7 @@
         document.getElementById('prop-visible').classList.toggle('on', def.visible !== false);
         document.getElementById('prop-starts-locked').classList.toggle('on', def.startsLocked === true);
         document.getElementById('prop-hide-in-editor').classList.toggle('on', rt.editorHidden === true);
+        renderConditions(name);
         // Force a layout tick so the CSS transition plays cleanly from translateY(100%)
         document.getElementById('editor-panel').getBoundingClientRect();
         document.getElementById('editor-panel').classList.add('open');

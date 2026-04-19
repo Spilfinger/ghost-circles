@@ -457,12 +457,105 @@
 
     #reposition-confirm-btn { background: #2e7d32; color: #fff; }
     #reposition-cancel-btn  { background: rgba(30, 30, 30, 0.92); color: rgba(255,255,255,0.8); }
+
+    /* Action rows in "When visited" list */
+    .action-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .action-label {
+      flex: 1;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.72);
+      line-height: 1.4;
+    }
+    .action-delete-btn {
+      background: none;
+      border: none;
+      color: #e53935;
+      font-size: 15px;
+      line-height: 1;
+      padding: 4px 6px;
+      cursor: pointer;
+      flex-shrink: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Action picker — fixed sheet that slides up over the panel */
+    #picker-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.35);
+      z-index: 1003;
+    }
+    #picker-backdrop.open { display: block; }
+
+    #action-picker {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      max-height: 60vh;
+      background: #1c1c1e;
+      border-radius: 16px 16px 0 0;
+      z-index: 1004;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #action-picker.open { display: flex; }
+
+    #action-picker-header {
+      display: flex;
+      align-items: center;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      flex-shrink: 0;
+    }
+    #action-picker-title {
+      flex: 1;
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+    }
+    #action-picker-cancel {
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 4px 6px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #action-picker-body {
+      padding: 10px 14px calc(24px + env(safe-area-inset-bottom));
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .picker-option-btn {
+      display: block;
+      width: 100%;
+      padding: 13px 14px;
+      margin-bottom: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14px;
+      font-family: system-ui, sans-serif;
+      text-align: left;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
   </style>
 </head>
 <body>
 
   <div id="map"></div>
-  <div id="version">v3.15</div>
+  <div id="version">v3.16</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -486,6 +579,16 @@
   <div id="reposition-bar">
     <button class="reposition-bar-btn" id="reposition-cancel-btn">Cancel</button>
     <button class="reposition-bar-btn" id="reposition-confirm-btn">Confirm position</button>
+  </div>
+
+  <!-- Action picker — two-step sheet: choose action type, then choose target circle -->
+  <div id="picker-backdrop"></div>
+  <div id="action-picker">
+    <div id="action-picker-header">
+      <span id="action-picker-title">Choose action</span>
+      <button id="action-picker-cancel" aria-label="Cancel">✕</button>
+    </div>
+    <div id="action-picker-body"></div>
   </div>
 
   <div id="editor-controls">
@@ -539,8 +642,8 @@
       <div id="panel-conditions-list"></div>
 
       <div class="prop-section">When visited</div>
-      <div id="panel-actions-list" class="panel-empty">None</div>
-      <button class="panel-add-btn">+ Add action</button>
+      <div id="panel-actions-list"></div>
+      <button class="panel-add-btn" id="panel-add-action-btn">+ Add action</button>
 
       <button id="panel-delete-btn">Delete circle</button>
     </div>
@@ -1114,6 +1217,7 @@
 
       let placementActive    = false;
       let repositionActive   = false; // true while the reposition preview is shown
+      let pickerActive       = false; // true while the action picker is open
       let selectedCircleName = null;
 
       const crossIcon = L.divIcon({
@@ -1208,6 +1312,142 @@
         }
       };
 
+      // ---- Actions (When visited) ----
+      // Actions are NOT stored directly on the source circle's def.
+      // "Circle A unlocks circle B" is represented as a visited condition on B's def.
+      // These helpers scan/mutate those condition arrays and display the result
+      // as outgoing actions in the source circle's panel.
+
+      const ACTION_TYPES = [
+        { key: 'conditions',        label: 'Unlock a circle',        display: 'Unlock' },
+        { key: 'lockConditions',    label: 'Lock a circle',          display: 'Lock' },
+        { key: 'visibleConditions', label: 'Show a circle on map',   display: 'Show on map' },
+        { key: 'hideConditions',    label: 'Hide a circle from map', display: 'Hide from map' },
+      ];
+
+      // Returns all outgoing actions authored by sourceName: scans every other circle's
+      // condition arrays for visited conditions that reference sourceName.
+      const getCircleActions = (sourceName) => {
+        const actions = [];
+        CIRCLE_DEFS.forEach(def => {
+          if (def.name === sourceName) return;
+          ACTION_TYPES.forEach(({ key, display }) => {
+            (def[key] || []).forEach(cond => {
+              if (cond.type === 'visited' && cond.circle === sourceName) {
+                actions.push({ display, targetName: def.name, arrayKey: key });
+              }
+            });
+          });
+        });
+        return actions;
+      };
+
+      // Renders the "When visited" action list for the given circle.
+      const renderActions = (name) => {
+        const el = document.getElementById('panel-actions-list');
+        if (!el) return;
+        el.innerHTML = '';
+        const actions = getCircleActions(name);
+        if (actions.length === 0) {
+          el.innerHTML = '<p class="panel-empty">None</p>';
+          return;
+        }
+        actions.forEach(({ display, targetName, arrayKey }) => {
+          const row = document.createElement('div');
+          row.className = 'action-row';
+          const lbl = document.createElement('span');
+          lbl.className   = 'action-label';
+          lbl.textContent = `${display}: ${targetName}`;
+          const del = document.createElement('button');
+          del.className   = 'action-delete-btn';
+          del.textContent = '✕';
+          del.setAttribute('aria-label', 'Delete action');
+          del.addEventListener('click', () => {
+            const targetDef = circleRuntime[targetName]?.def;
+            if (!targetDef || !targetDef[arrayKey]) return;
+            const idx = targetDef[arrayKey].findIndex(
+              c => c.type === 'visited' && c.circle === name
+            );
+            if (idx !== -1) targetDef[arrayKey].splice(idx, 1);
+            renderActions(name);
+            saveDraft();
+          });
+          row.appendChild(lbl);
+          row.appendChild(del);
+          el.appendChild(row);
+        });
+      };
+
+      // ---- Action picker ----
+
+      let _pickerActionKey = null; // arrayKey chosen in step 1
+
+      const closeActionPicker = () => {
+        pickerActive = false;
+        document.getElementById('action-picker').classList.remove('open');
+        document.getElementById('picker-backdrop').classList.remove('open');
+      };
+
+      const renderPickerStep2 = () => {
+        document.getElementById('action-picker-title').textContent = 'Choose circle';
+        const body = document.getElementById('action-picker-body');
+        body.innerHTML = '';
+        const others = CIRCLE_DEFS.filter(d => d.name !== selectedCircleName);
+        if (others.length === 0) {
+          const p = document.createElement('p');
+          p.className   = 'panel-empty';
+          p.style.padding = '12px 0';
+          p.textContent = 'No other circles in this haunt yet';
+          body.appendChild(p);
+          return;
+        }
+        others.forEach(def => {
+          const btn = document.createElement('button');
+          btn.className   = 'picker-option-btn';
+          btn.textContent = def.name;
+          btn.addEventListener('click', () => {
+            // Write the condition onto the TARGET circle's def
+            const targetDef = circleRuntime[def.name]?.def;
+            if (targetDef) {
+              if (!targetDef[_pickerActionKey]) targetDef[_pickerActionKey] = [];
+              const already = targetDef[_pickerActionKey].some(
+                c => c.type === 'visited' && c.circle === selectedCircleName
+              );
+              if (!already) {
+                targetDef[_pickerActionKey].push(
+                  { type: 'visited', circle: selectedCircleName, minTimes: 1 }
+                );
+              }
+            }
+            closeActionPicker();
+            renderActions(selectedCircleName);
+            saveDraft();
+          });
+          body.appendChild(btn);
+        });
+      };
+
+      const openActionPicker = () => {
+        if (!selectedCircleName) return;
+        pickerActive = true;
+        _pickerActionKey = null;
+        document.getElementById('action-picker-title').textContent = 'Choose action';
+        const body = document.getElementById('action-picker-body');
+        body.innerHTML = '';
+        ACTION_TYPES.forEach(({ key, label }) => {
+          const btn = document.createElement('button');
+          btn.className   = 'picker-option-btn';
+          btn.textContent = label;
+          btn.addEventListener('click', () => {
+            _pickerActionKey = key;
+            renderPickerStep2();
+          });
+          body.appendChild(btn);
+        });
+        document.getElementById('action-picker').classList.add('open');
+        document.getElementById('picker-backdrop').classList.add('open');
+      };
+
       const openPanel = (name) => {
         const rt  = circleRuntime[name];
         const def = rt.def;
@@ -1220,6 +1460,7 @@
         document.getElementById('prop-starts-locked').classList.toggle('on', def.startsLocked === true);
         document.getElementById('prop-hide-in-editor').classList.toggle('on', rt.editorHidden === true);
         renderConditions(name);
+        renderActions(name);
         // Force a layout tick so the CSS transition plays cleanly from translateY(100%)
         document.getElementById('editor-panel').getBoundingClientRect();
         document.getElementById('editor-panel').classList.add('open');
@@ -1423,7 +1664,7 @@
       CIRCLE_DEFS.forEach(def => addEditorToCircle(def.name));
 
       // Map events
-      map.on('click', () => { if (!placementActive && !repositionActive) deselectCircle(); });
+      map.on('click', () => { if (!placementActive && !repositionActive && !pickerActive) deselectCircle(); });
       map.on('move zoom', updatePlacementReadout);
 
       // + button
@@ -1517,6 +1758,11 @@
           if (rt.centerMarker) rt.centerMarker.addTo(map);
         }
       });
+
+      // Add action button + picker cancel + backdrop
+      document.getElementById('panel-add-action-btn').addEventListener('click', () => openActionPicker());
+      document.getElementById('action-picker-cancel').addEventListener('click', () => closeActionPicker());
+      document.getElementById('picker-backdrop').addEventListener('click', () => closeActionPicker());
 
       // Reposition button
       document.getElementById('prop-reposition-btn').addEventListener('click', () => enterRepositionMode());

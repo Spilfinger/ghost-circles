@@ -369,12 +369,56 @@
       padding: 4px 6px;
       -webkit-tap-highlight-color: transparent;
     }
+
+    #prop-reposition-btn {
+      display: block;
+      width: 100%;
+      margin-top: 16px;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 14px;
+      font-family: system-ui, sans-serif;
+      text-align: center;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Reposition confirm/cancel bar — floats above the map during reposition mode */
+    #reposition-bar {
+      display: none; /* flex when repositionActive */
+      position: fixed;
+      bottom: calc(28px + env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1002;
+      gap: 10px;
+      align-items: center;
+      white-space: nowrap;
+    }
+
+    .reposition-bar-btn {
+      padding: 13px 22px;
+      border-radius: 26px;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: system-ui, sans-serif;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    }
+
+    #reposition-confirm-btn { background: #2e7d32; color: #fff; }
+    #reposition-cancel-btn  { background: rgba(30, 30, 30, 0.92); color: rgba(255,255,255,0.8); }
   </style>
 </head>
 <body>
 
   <div id="map"></div>
-  <div id="version">v3.11</div>
+  <div id="version">v3.12</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -391,6 +435,11 @@
   <div id="placement-preview">
     <div id="placement-circle"></div>
     <div id="placement-readout">—</div>
+  </div>
+
+  <div id="reposition-bar">
+    <button class="reposition-bar-btn" id="reposition-cancel-btn">Cancel</button>
+    <button class="reposition-bar-btn" id="reposition-confirm-btn">Confirm position</button>
   </div>
 
   <div id="editor-controls">
@@ -437,6 +486,8 @@
         <span class="prop-label">Hide in editor</span>
         <button class="prop-toggle editor-toggle" id="prop-hide-in-editor" aria-label="Hide in editor"></button>
       </div>
+
+      <button id="prop-reposition-btn">Reposition</button>
 
       <div class="prop-section">When visited</div>
       <div id="panel-actions-list" class="panel-empty">None</div>
@@ -1007,6 +1058,7 @@
       const PLACEMENT_RADIUS_PX = 80; // fixed pixel radius of the placement preview circle
 
       let placementActive    = false;
+      let repositionActive   = false; // true while the reposition preview is shown
       let selectedCircleName = null;
 
       const crossIcon = L.divIcon({
@@ -1025,12 +1077,38 @@
         return centerLL.distanceTo(edgeLL);
       };
 
+      // Inverse of getRadiusForPixels: metres → pixels at current map center/zoom.
+      const getPixelsForRadius = (meters) => {
+        const size     = map.getSize();
+        const centerLL = map.containerPointToLatLng(L.point(size.x / 2, size.y / 2));
+        const earthMetersPerDegLng = 111319.9 * Math.cos(centerLL.lat * Math.PI / 180);
+        const lngOffset = meters / earthMetersPerDegLng;
+        const edgeLL    = L.latLng(centerLL.lat, centerLL.lng + lngOffset);
+        const cPx = map.latLngToContainerPoint(centerLL);
+        const ePx = map.latLngToContainerPoint(edgeLL);
+        return Math.abs(ePx.x - cPx.x);
+      };
+
       const updatePlacementReadout = () => {
-        if (!placementActive) return;
+        if (!placementActive && !repositionActive) return;
         const center = map.getCenter();
-        const radius = getRadiusForPixels(PLACEMENT_RADIUS_PX);
-        document.getElementById('placement-readout').textContent =
-          `${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}  ·  r = ${Math.round(radius)} m`;
+
+        if (repositionActive) {
+          // Radius is fixed — resize the preview circle to match at current zoom
+          const rt       = circleRuntime[selectedCircleName];
+          const radiusM  = rt.def.radius;
+          const radiusPx = Math.max(20, Math.round(getPixelsForRadius(radiusM)));
+          const diam     = radiusPx * 2;
+          const circ     = document.getElementById('placement-circle');
+          circ.style.width  = `${diam}px`;
+          circ.style.height = `${diam}px`;
+          document.getElementById('placement-readout').textContent =
+            `${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}  ·  r = ${radiusM} m`;
+        } else {
+          const radius = getRadiusForPixels(PLACEMENT_RADIUS_PX);
+          document.getElementById('placement-readout').textContent =
+            `${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}  ·  r = ${Math.round(radius)} m`;
+        }
       };
 
       const openPanel = (name) => {
@@ -1081,9 +1159,47 @@
           icon: crossIcon, interactive: true, zIndexOffset: 500,
         }).addTo(map);
         rt.centerMarker = marker;
-        const onTap = e => { L.DomEvent.stopPropagation(e); selectCircle(name); };
+        // Use rt.def.name (not the closed-over name) so renames don't break tap-to-select.
+        // After a rename, circleRuntime[name] is gone but rt.def.name is always current.
+        const onTap = e => { L.DomEvent.stopPropagation(e); selectCircle(rt.def.name); };
         rt.leafletCircle.on('click', onTap);
         marker.on('click', onTap);
+      };
+
+      const enterRepositionMode = () => {
+        if (!selectedCircleName) return;
+        repositionActive = true;
+        closePanel(); // close sheet but keep selectedCircleName and dashed outline
+        document.getElementById('placement-preview').style.display = 'flex';
+        document.getElementById('reposition-bar').style.display    = 'flex';
+        updatePlacementReadout(); // sets correct pixel size immediately
+      };
+
+      const exitRepositionMode = () => {
+        repositionActive = false;
+        document.getElementById('placement-preview').style.display = 'none';
+        document.getElementById('reposition-bar').style.display    = 'none';
+        // Clear inline size override so normal placement mode uses CSS default
+        const circ = document.getElementById('placement-circle');
+        circ.style.width  = '';
+        circ.style.height = '';
+      };
+
+      const confirmReposition = () => {
+        const name   = selectedCircleName;
+        const center = map.getCenter();
+        const rt     = circleRuntime[name];
+        rt.def.lat = center.lat;
+        rt.def.lng = center.lng;
+        rt.leafletCircle.setLatLng([center.lat, center.lng]);
+        if (rt.centerMarker) rt.centerMarker.setLatLng([center.lat, center.lng]);
+        exitRepositionMode();
+        openPanel(name); // reopen panel with all properties intact
+      };
+
+      const cancelReposition = () => {
+        exitRepositionMode();
+        openPanel(selectedCircleName); // reopen panel — def unchanged
       };
 
       const enterPlacementMode = () => {
@@ -1147,7 +1263,7 @@
       CIRCLE_DEFS.forEach(def => addEditorToCircle(def.name));
 
       // Map events
-      map.on('click', () => { if (!placementActive) deselectCircle(); });
+      map.on('click', () => { if (!placementActive && !repositionActive) deselectCircle(); });
       map.on('move zoom', updatePlacementReadout);
 
       // + button
@@ -1209,7 +1325,11 @@
         if (!selectedCircleName) return;
         const nowOn = !this.classList.contains('on');
         this.classList.toggle('on', nowOn);
-        circleRuntime[selectedCircleName].def.startsLocked = nowOn;
+        const rt = circleRuntime[selectedCircleName];
+        rt.def.startsLocked = nowOn;
+        // Immediately reflect on the map: grey = locked, red = passive
+        const color = nowOn ? COLOR_LOCKED : COLOR_PASSIVE;
+        rt.leafletCircle.setStyle({ color, fillColor: color });
       });
 
       document.getElementById('prop-hide-in-editor').addEventListener('click', function () {
@@ -1227,6 +1347,13 @@
           if (rt.centerMarker) rt.centerMarker.addTo(map);
         }
       });
+
+      // Reposition button
+      document.getElementById('prop-reposition-btn').addEventListener('click', () => enterRepositionMode());
+
+      // Reposition confirm / cancel
+      document.getElementById('reposition-confirm-btn').addEventListener('click', () => confirmReposition());
+      document.getElementById('reposition-cancel-btn').addEventListener('click',  () => cancelReposition());
 
       // Close button
       document.getElementById('panel-close-btn').addEventListener('click', () => deselectCircle());

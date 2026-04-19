@@ -156,37 +156,59 @@
       /* Total height = 48px visible bar + safe area at top (status bar / notch) */
       height: calc(48px + env(safe-area-inset-top));
       padding-top: env(safe-area-inset-top);
-      padding-left: max(16px, env(safe-area-inset-left));
-      padding-right: max(16px, env(safe-area-inset-right));
+      padding-left: max(12px, env(safe-area-inset-left));
+      padding-right: max(4px, env(safe-area-inset-right));
       background: #1a2a4a;
       color: #fff;
       font-family: system-ui, sans-serif;
-      font-size: 15px;
-      font-weight: 500;
-      gap: 6px;
       z-index: 1001;
       align-items: center;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      /* Promote to GPU compositing layer — stabilises fixed positioning on iOS Safari */
+      /* Promote to GPU compositing layer — stabilises fixed positioning on iOS Safari.
+         Fixed elements also act as containing blocks for absolutely-positioned children,
+         so #draft-saved-flash can be positioned inside without a separate wrapper. */
       transform: translateZ(0);
       -webkit-transform: translateZ(0);
     }
 
-    #editor-header .eh-label { opacity: 0.55; }
-
-    #haunt-name {
-      outline: none;
-      border-bottom: 1px dashed rgba(255, 255, 255, 0.35);
-      padding: 2px 4px;
-      cursor: text;
-      min-width: 40px;
+    /* "Editor" label — small, muted, left-anchored */
+    .eh-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.38);
+      flex-shrink: 0;
+      user-select: none;
     }
-    #haunt-name:focus { border-bottom-color: rgba(255, 255, 255, 0.8); }
 
+    /* Editable haunt name — centered, expands to fill available space */
+    #haunt-name {
+      flex: 1;
+      text-align: center;
+      font-size: 15px;
+      font-weight: 500;
+      outline: none;
+      border-bottom: 1px dashed rgba(255, 255, 255, 0.28);
+      padding: 2px 8px;
+      cursor: text;
+      min-width: 0;
+      /* Prevent iOS from zooming into the field on focus */
+      font-size: 15px;
+    }
+    #haunt-name:focus { border-bottom-color: rgba(255, 255, 255, 0.75); }
+
+    /* "Draft saved" flash — absolutely positioned inside the header so it
+       never disturbs the flex layout */
     #draft-saved-flash {
-      margin-left: auto;
-      font-size: 12px;
-      color: rgba(255, 255, 255, 0.55);
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 3px;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      color: rgba(255, 255, 255, 0.45);
       opacity: 0;
       transition: opacity 0.25s;
       pointer-events: none;
@@ -194,18 +216,32 @@
     }
     #draft-saved-flash.visible { opacity: 1; }
 
-    #clear-draft-btn {
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-radius: 14px;
-      color: rgba(255, 255, 255, 0.65);
-      font-size: 12px;
-      font-family: system-ui, sans-serif;
-      padding: 4px 10px;
+    /* Right-side icon button group */
+    #editor-header-actions {
+      display: flex;
+      flex-shrink: 0;
+      gap: 0;
+    }
+
+    .eh-icon-btn {
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      border-radius: 10px;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 19px;
+      line-height: 1;
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
-      white-space: nowrap;
-      flex-shrink: 0;
+      transition: background 0.14s, color 0.14s;
+    }
+    .eh-icon-btn:active {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
     }
 
     #editor-controls {
@@ -584,37 +620,6 @@
     }
 
     /* Export haunt button — in the editor header */
-    #export-haunt-btn {
-      background: rgba(255, 255, 255, 0.13);
-      border: 1px solid rgba(255, 255, 255, 0.28);
-      border-radius: 14px;
-      color: #fff;
-      font-size: 12px;
-      font-family: system-ui, sans-serif;
-      font-weight: 600;
-      padding: 4px 10px;
-      cursor: pointer;
-      -webkit-tap-highlight-color: transparent;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-
-    /* Import haunt button — same visual weight as Export */
-    #import-haunt-btn {
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-radius: 14px;
-      color: rgba(255, 255, 255, 0.8);
-      font-size: 12px;
-      font-family: system-ui, sans-serif;
-      font-weight: 600;
-      padding: 4px 10px;
-      cursor: pointer;
-      -webkit-tap-highlight-color: transparent;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-
     /* Import modal */
     #import-modal-backdrop {
       display: none;
@@ -862,12 +867,14 @@
 
   <!-- Editor mode UI — shown via body.editor CSS class when ?editor=true -->
   <div id="editor-header">
-    <span class="eh-label">Editor —</span>
+    <span class="eh-label">Editor</span>
     <span id="haunt-name" contenteditable="true" spellcheck="false">New Haunt</span>
+    <div id="editor-header-actions">
+      <button class="eh-icon-btn" id="export-haunt-btn" aria-label="Export haunt">↑</button>
+      <button class="eh-icon-btn" id="import-haunt-btn" aria-label="Import haunt">↓</button>
+      <button class="eh-icon-btn" id="clear-draft-btn"  aria-label="Clear draft">🗑</button>
+    </div>
     <span id="draft-saved-flash">Draft saved</span>
-    <button id="export-haunt-btn">Export</button>
-    <button id="import-haunt-btn">Import</button>
-    <button id="clear-draft-btn">Clear draft</button>
   </div>
 
   <!-- Import modal -->

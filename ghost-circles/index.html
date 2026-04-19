@@ -112,6 +112,34 @@
        EDITOR MODE — all rules below are inert in play mode
        ===================================================== */
 
+    /* Haunt title bar — shown in play mode when a ?haunt= URL param is present */
+    #haunt-title-bar {
+      display: none; /* overridden by body.haunt rule below */
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: calc(48px + env(safe-area-inset-top));
+      padding-top: env(safe-area-inset-top);
+      padding-left: max(16px, env(safe-area-inset-left));
+      padding-right: max(16px, env(safe-area-inset-right));
+      background: #1a4a2a;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      font-size: 15px;
+      font-weight: 500;
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
+      pointer-events: none;
+    }
+    body.haunt #haunt-title-bar   { display: flex; }
+    body.haunt .leaflet-top.leaflet-left { top: calc(60px + env(safe-area-inset-top)); }
+    body.haunt #version           { top: calc(60px + env(safe-area-inset-top)); }
+    body.haunt #inventory         { top: calc(60px + env(safe-area-inset-top)); }
+
     /* Push Leaflet zoom controls and version pill below the editor header */
     body.editor .leaflet-top.leaflet-left { top: calc(60px + env(safe-area-inset-top)); }
     body.editor #version { top: calc(60px + env(safe-area-inset-top)); }
@@ -571,6 +599,134 @@
       flex-shrink: 0;
     }
 
+    /* Import haunt button — same visual weight as Export */
+    #import-haunt-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 14px;
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 12px;
+      font-family: system-ui, sans-serif;
+      font-weight: 600;
+      padding: 4px 10px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* Import modal */
+    #import-modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 1005;
+    }
+    #import-modal-backdrop.open { display: block; }
+
+    #import-modal {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      max-height: 70vh;
+      background: #1c1c1e;
+      border-radius: 16px 16px 0 0;
+      z-index: 1006;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #import-modal.open { display: flex; }
+
+    #import-modal-header {
+      display: flex;
+      align-items: center;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      flex-shrink: 0;
+    }
+    #import-modal-title {
+      flex: 1;
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+    }
+    #import-modal-close {
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 4px 6px;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #import-modal-body {
+      padding: 16px 16px calc(32px + env(safe-area-inset-bottom));
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      font-family: system-ui, sans-serif;
+    }
+
+    #import-paste-area {
+      display: block;
+      width: 100%;
+      min-height: 90px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 13px;
+      font-family: monospace;
+      padding: 10px 12px;
+      outline: none;
+      resize: vertical;
+      -webkit-appearance: none;
+      margin-bottom: 12px;
+    }
+    #import-paste-area::placeholder { color: rgba(255, 255, 255, 0.25); }
+    #import-paste-area:focus { border-color: rgba(255, 255, 255, 0.32); }
+
+    #import-error {
+      display: none;
+      font-size: 13px;
+      color: #e57373;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+
+    #import-confirm-btn {
+      display: block;
+      width: 100%;
+      padding: 13px;
+      background: #1565C0;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: system-ui, sans-serif;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      margin-bottom: 10px;
+    }
+
+    #import-cancel-btn {
+      display: block;
+      width: 100%;
+      padding: 13px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      color: rgba(255, 255, 255, 0.65);
+      font-size: 15px;
+      font-family: system-ui, sans-serif;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
     /* Export modal */
     #export-modal-backdrop {
       display: none;
@@ -694,7 +850,9 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v3.18</div>
+  <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
+  <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
+  <div id="version">v3.19</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -708,7 +866,23 @@
     <span id="haunt-name" contenteditable="true" spellcheck="false">New Haunt</span>
     <span id="draft-saved-flash">Draft saved</span>
     <button id="export-haunt-btn">Export</button>
+    <button id="import-haunt-btn">Import</button>
     <button id="clear-draft-btn">Clear draft</button>
+  </div>
+
+  <!-- Import modal -->
+  <div id="import-modal-backdrop"></div>
+  <div id="import-modal">
+    <div id="import-modal-header">
+      <span id="import-modal-title">Import haunt</span>
+      <button id="import-modal-close" aria-label="Cancel">✕</button>
+    </div>
+    <div id="import-modal-body">
+      <textarea id="import-paste-area" placeholder="Paste a play URL or raw haunt JSON here…" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+      <p id="import-error">Could not read haunt — please check the URL or JSON and try again.</p>
+      <button id="import-confirm-btn">Import</button>
+      <button id="import-cancel-btn">Cancel</button>
+    </div>
   </div>
 
   <!-- Export modal -->
@@ -898,6 +1072,8 @@
           }
           if (_haunt.metadata?.title) {
             document.title = _haunt.metadata.title;
+            document.getElementById('haunt-title-text').textContent = _haunt.metadata.title;
+            document.body.classList.add('haunt');
           }
         } catch(e) { /* malformed param — fall through to hardcoded CIRCLE_DEFS */ }
       }
@@ -2006,12 +2182,20 @@
       // ---- Autosave ----
 
       let _saveFlashTimer = null;
-      const showSavedFlash = () => {
+
+      // Generic flash: temporarily overrides the "Draft saved" text with any message.
+      const showFlash = (msg, durationMs = 2000) => {
         const el = document.getElementById('draft-saved-flash');
+        el.textContent = msg;
         el.classList.add('visible');
         clearTimeout(_saveFlashTimer);
-        _saveFlashTimer = setTimeout(() => el.classList.remove('visible'), 1800);
+        _saveFlashTimer = setTimeout(() => {
+          el.classList.remove('visible');
+          el.textContent = 'Draft saved';
+        }, durationMs);
       };
+
+      const showSavedFlash = () => showFlash('Draft saved', 1800);
 
       const saveDraft = () => {
         const title = document.getElementById('haunt-name').textContent.trim();
@@ -2107,6 +2291,93 @@
               icon.style.color = '#e53935';
             });
         });
+      };
+
+      // ---- Import ----
+
+      const closeImportModal = () => {
+        document.getElementById('import-modal').classList.remove('open');
+        document.getElementById('import-modal-backdrop').classList.remove('open');
+        document.getElementById('import-error').style.display = 'none';
+      };
+
+      const importHaunt = () => {
+        const raw     = document.getElementById('import-paste-area').value.trim();
+        const errorEl = document.getElementById('import-error');
+        errorEl.style.display = 'none';
+
+        // Parse the input — either a URL containing ?haunt= or raw JSON
+        let haunt;
+        try {
+          const hauntMatch = raw.match(/[?&]haunt=([^&\s]+)/);
+          const jsonStr = hauntMatch
+            ? LZString.decompressFromEncodedURIComponent(hauntMatch[1])
+            : raw;
+          if (!jsonStr) throw new Error('empty');
+          haunt = JSON.parse(jsonStr);
+        } catch(e) {
+          errorEl.style.display = 'block';
+          return;
+        }
+
+        // Validate
+        if (!Array.isArray(haunt?.circles) || !haunt?.metadata) {
+          errorEl.style.display = 'block';
+          return;
+        }
+
+        // Exit any active modes cleanly before tearing down the map
+        if (placementActive) {
+          placementActive = false;
+          document.getElementById('editor-add-btn').classList.remove('active');
+          document.getElementById('placement-preview').style.display = 'none';
+        }
+        if (repositionActive) exitRepositionMode();
+        deselectCircle();
+
+        // Remove all existing circle layers and cross markers from the map
+        Object.values(circleRuntime).forEach(rt => {
+          if (rt.onMap)        map.removeLayer(rt.leafletCircle);
+          if (rt.centerMarker) map.removeLayer(rt.centerMarker);
+        });
+        Object.keys(circleRuntime).forEach(k => delete circleRuntime[k]);
+
+        // Replace CIRCLE_DEFS with imported circles
+        CIRCLE_DEFS.length = 0;
+        haunt.circles.forEach(c => CIRCLE_DEFS.push(c));
+
+        // Replace metadata, preserving this haunt's id and created date
+        _hauntMeta = {
+          ...haunt.metadata,
+          id:      _hauntMeta.id,
+          created: _hauntMeta.created,
+        };
+
+        // Update the haunt name in the header
+        document.getElementById('haunt-name').textContent = haunt.metadata.title || 'Imported Haunt';
+
+        // Rebuild circleRuntime and Leaflet layers from the imported circles
+        CIRCLE_DEFS.forEach(def => {
+          const state = (!def.startsLocked && evaluateConditions(def)) ? 'passive' : 'locked';
+          const color = state === 'locked' ? COLOR_LOCKED : COLOR_PASSIVE;
+          const leafletCircle = L.circle([def.lat, def.lng], {
+            radius: def.radius, color, fillColor: color,
+            fillOpacity: 0.15, weight: 2,
+          });
+          const onMap = def.visibleConditions?.length ? false : def.visible !== false;
+          if (onMap) leafletCircle.addTo(map);
+          circleRuntime[def.name] = {
+            def, leafletCircle, state, inRange: false, visited: 0, onMap,
+            activeGain: null, activeSource: null, playsRemaining: 0,
+          };
+          addEditorToCircle(def.name);
+        });
+
+        // Autosave and close
+        saveDraft();
+        closeImportModal();
+        document.getElementById('import-paste-area').value = '';
+        showFlash('Haunt imported');
       };
 
       // ---- Setup ----
@@ -2299,7 +2570,21 @@
         this.select();
       });
 
-      // Clear draft — removes localStorage entry and reloads to restore hardcoded defaults
+      // Import haunt
+      document.getElementById('import-haunt-btn').addEventListener('click', () => {
+        document.getElementById('import-error').style.display = 'none';
+        document.getElementById('import-modal').classList.add('open');
+        document.getElementById('import-modal-backdrop').classList.add('open');
+        // Focus textarea so the user can paste immediately
+        setTimeout(() => document.getElementById('import-paste-area').focus(), 80);
+      });
+      document.getElementById('import-confirm-btn').addEventListener('click', () => importHaunt());
+      document.getElementById('import-cancel-btn').addEventListener('click',  () => closeImportModal());
+      document.getElementById('import-modal-close').addEventListener('click', () => closeImportModal());
+      document.getElementById('import-modal-backdrop').addEventListener('click', () => closeImportModal());
+
+      // Clear draft — removes localStorage entry and reloads to restore hardcoded defaults.
+      // After reload with no draft, _hauntMeta is freshly generated and haunt name resets to "New Haunt".
       document.getElementById('clear-draft-btn').addEventListener('click', () => {
         localStorage.removeItem(DRAFT_KEY);
         window.location.reload();

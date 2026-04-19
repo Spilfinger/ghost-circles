@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#000000" />
   <title>Ghost Circles</title>
   <link rel="manifest" href="manifest.json" />
@@ -22,9 +22,11 @@
       overflow: hidden;
     }
 
+    /* position:fixed + inset:0 anchors to the visual viewport on iOS Safari,
+       bypassing the layout-viewport 100%/100vh measurement bug. */
     #map {
-      width: 100%;
-      height: 100%;
+      position: fixed;
+      inset: 0;
     }
 
     #version {
@@ -108,20 +110,23 @@
        ===================================================== */
 
     /* Push Leaflet zoom controls and version pill below the editor header */
-    body.editor .leaflet-top.leaflet-left { top: 60px; }
-    body.editor #version { top: 60px; }
+    body.editor .leaflet-top.leaflet-left { top: calc(60px + env(safe-area-inset-top)); }
+    body.editor #version { top: calc(60px + env(safe-area-inset-top)); }
 
     #editor-header {
       display: none; /* shown via JS when EDITOR_MODE */
       position: fixed;
       top: 0; left: 0; right: 0;
-      height: 48px;
+      /* Total height = 48px visible bar + safe area at top (status bar / notch) */
+      height: calc(48px + env(safe-area-inset-top));
+      padding-top: env(safe-area-inset-top);
+      padding-left: max(16px, env(safe-area-inset-left));
+      padding-right: max(16px, env(safe-area-inset-right));
       background: #1a2a4a;
       color: #fff;
       font-family: system-ui, sans-serif;
       font-size: 15px;
       font-weight: 500;
-      padding: 0 16px;
       gap: 6px;
       z-index: 1001;
       align-items: center;
@@ -142,8 +147,8 @@
     #editor-controls {
       display: none; /* shown via JS when EDITOR_MODE */
       position: fixed;
-      bottom: 28px;
-      right: 16px;
+      bottom: calc(28px + env(safe-area-inset-bottom));
+      right: max(16px, env(safe-area-inset-right));
       flex-direction: column;
       gap: 10px;
       z-index: 1001;
@@ -246,7 +251,7 @@
     }
 
     .panel-body {
-      padding: 12px 20px 40px;
+      padding: 12px 20px calc(40px + env(safe-area-inset-bottom));
       font-family: system-ui, sans-serif;
       color: #fff;
     }

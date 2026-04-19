@@ -1213,7 +1213,7 @@
 
     // --- Service Worker registration ---
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      navigator.serviceWorker.register('sw.js?v=20260419').catch(() => {});
 
       // Reload automatically when a new service worker activates,
       // so the app always runs the latest version after a deploy.

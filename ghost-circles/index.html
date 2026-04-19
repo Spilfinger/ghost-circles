@@ -776,7 +776,7 @@
       </div>
       <div class="prop-row">
         <span class="prop-label">Whisper</span>
-        <input id="prop-whisper" class="prop-input mono" type="text" placeholder="audio/filename.m4a"
+        <input id="prop-whisper" class="prop-input mono" type="text" placeholder="filename.m4a"
                autocomplete="off" autocorrect="off" spellcheck="false" />
       </div>
       <div class="prop-row">
@@ -877,7 +877,7 @@
         priority:   50,
         visible:    true,
         repeat:     1,
-        whisper:    'audio/near.m4a',
+        whisper:    'near.m4a',
         conditions: [],
       },
     ];
@@ -1048,7 +1048,7 @@
 
     // --- Whisper audio (Web Audio API — required for reliable iOS Safari playback) ---
     let audioCtx = null;
-    const whisperBuffers = {}; // keyed by file path
+    const whisperBuffers = {}; // keyed by stored value (bare filename for whispers, full path for items)
 
     async function initAudio() {
       // AudioContext must be created inside a user gesture on iOS
@@ -1061,17 +1061,24 @@
         debugLog(`ctx resumed: ${audioCtx.state}`);
       }
 
-      // Pre-load every unique audio file: circle whispers + item descriptions
-      const whisperFiles = CIRCLE_DEFS.map(d => d.whisper);
-      const itemFiles    = PLAYER_ITEMS.filter(i => i.audio).map(i => i.audio);
-      const files = [...new Set([...whisperFiles, ...itemFiles])];
-      await Promise.all(files.map(async file => {
-        const response = await fetch(file);
-        if (!response.ok) throw new Error(`HTTP ${response.status} fetching ${file}`);
-        const arrayBuffer = await response.arrayBuffer();
-        whisperBuffers[file] = await audioCtx.decodeAudioData(arrayBuffer);
-      }));
-      debugLog(`buffers loaded: ${files.length}`);
+      // Pre-load every unique audio file.
+      // Circle whispers are stored as bare filenames (e.g. "near.m4a"); the engine
+      // always prepends "audio/" when fetching. Item audio files store full paths.
+      const whisperFiles = [...new Set(CIRCLE_DEFS.map(d => d.whisper).filter(Boolean))];
+      const itemFiles    = [...new Set(PLAYER_ITEMS.filter(i => i.audio).map(i => i.audio))];
+      await Promise.all([
+        ...whisperFiles.map(async file => {
+          const response = await fetch(`audio/${file}`);
+          if (!response.ok) throw new Error(`HTTP ${response.status} fetching audio/${file}`);
+          whisperBuffers[file] = await audioCtx.decodeAudioData(await response.arrayBuffer());
+        }),
+        ...itemFiles.map(async file => {
+          const response = await fetch(file);
+          if (!response.ok) throw new Error(`HTTP ${response.status} fetching ${file}`);
+          whisperBuffers[file] = await audioCtx.decodeAudioData(await response.arrayBuffer());
+        }),
+      ]);
+      debugLog(`buffers loaded: ${whisperFiles.length + itemFiles.length}`);
       renderDebug();
     }
 
@@ -1084,7 +1091,7 @@
 
       const repeat = rt.def.repeat ?? 1;
       const label  = repeat === 0 ? '∞' : String(repeat);
-      debugLog(`play: ${rt.def.whisper.split('/').pop()} ×${label} (ctx:${audioCtx.state})`);
+      debugLog(`play: ${rt.def.whisper} ×${label} (ctx:${audioCtx.state})`);
 
       const gain = audioCtx.createGain();
       gain.gain.setValueAtTime(1, audioCtx.currentTime);
@@ -2090,7 +2097,7 @@
           row.appendChild(label);
           listEl.appendChild(row);
 
-          fetch(file, { method: 'HEAD' })
+          fetch(`audio/${file}`, { method: 'HEAD' })
             .then(r => {
               icon.textContent = r.ok ? '✓' : '✗';
               icon.style.color = r.ok ? '#66bb6a' : '#e53935';

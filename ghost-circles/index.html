@@ -136,6 +136,9 @@
       z-index: 1001;
       align-items: center;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      /* Promote to GPU compositing layer — stabilises fixed positioning on iOS Safari */
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
     }
 
     #editor-header .eh-label { opacity: 0.55; }
@@ -459,7 +462,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v3.14</div>
+  <div id="version">v3.15</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1380,6 +1383,36 @@
 
       // Adding body.editor triggers the CSS rules that show all three editor chrome elements.
       document.body.classList.add('editor');
+
+      // Rock-solid header positioning.
+      // On iOS Safari, position:fixed is relative to the initial containing block (layout
+      // viewport), not the visual viewport. When the browser toolbar appears or disappears
+      // the visual viewport shifts without resizing the layout viewport, so the header can
+      // slip partially behind the toolbar. visualViewport.offsetTop reports this drift and
+      // lets us compensate with an inline top override.
+      const enforceHeaderPosition = () => {
+        const header = document.getElementById('editor-header');
+        if (!header) return;
+        // Clear any previous override so getBoundingClientRect reflects pure CSS value
+        header.style.top = '';
+        if (window.visualViewport && window.visualViewport.offsetTop > 0) {
+          // Visual viewport has drifted down — shift header down by the same amount
+          header.style.top = `${Math.round(window.visualViewport.offsetTop)}px`;
+        }
+        // Belt-and-suspenders: if header still sits above the visible area, pull it back
+        const rect = header.getBoundingClientRect();
+        if (rect.top < 0) {
+          const current = parseInt(header.style.top, 10) || 0;
+          header.style.top = `${current - rect.top}px`;
+        }
+      };
+
+      enforceHeaderPosition(); // correct any drift immediately on load
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', enforceHeaderPosition);
+        window.visualViewport.addEventListener('scroll', enforceHeaderPosition);
+      }
+      window.addEventListener('resize', enforceHeaderPosition);
 
       // Restore haunt name from draft if one exists
       if (_editorDraft?.hauntName) {

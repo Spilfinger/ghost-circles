@@ -113,8 +113,13 @@
     body.editor .leaflet-top.leaflet-left { top: calc(60px + env(safe-area-inset-top)); }
     body.editor #version { top: calc(60px + env(safe-area-inset-top)); }
 
+    /* Show editor chrome via CSS class — more reliable than JS inline style on iOS Safari */
+    body.editor #editor-header   { display: flex; }
+    body.editor #editor-controls { display: flex; }
+    body.editor #editor-panel    { display: block; }
+
     #editor-header {
-      display: none; /* shown via JS when EDITOR_MODE */
+      display: none; /* overridden by body.editor rule above */
       position: fixed;
       top: 0; left: 0; right: 0;
       /* Total height = 48px visible bar + safe area at top (status bar / notch) */
@@ -144,8 +149,33 @@
     }
     #haunt-name:focus { border-bottom-color: rgba(255, 255, 255, 0.8); }
 
+    #draft-saved-flash {
+      margin-left: auto;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.55);
+      opacity: 0;
+      transition: opacity 0.25s;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    #draft-saved-flash.visible { opacity: 1; }
+
+    #clear-draft-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 14px;
+      color: rgba(255, 255, 255, 0.65);
+      font-size: 12px;
+      font-family: system-ui, sans-serif;
+      padding: 4px 10px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
     #editor-controls {
-      display: none; /* shown via JS when EDITOR_MODE */
+      display: none; /* overridden by body.editor rule */
       position: fixed;
       bottom: calc(28px + env(safe-area-inset-bottom));
       right: max(16px, env(safe-area-inset-right));
@@ -228,7 +258,7 @@
 
     /* Bottom sheet — circle property editor */
     #editor-panel {
-      display: none; /* block in editor mode */
+      display: none; /* overridden by body.editor rule */
       position: fixed;
       bottom: 0; left: 0; right: 0;
       max-height: 60vh;
@@ -429,7 +459,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v3.13</div>
+  <div id="version">v3.14</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -437,10 +467,12 @@
     <span>Tap to Start</span>
   </div>
 
-  <!-- Editor mode UI — all hidden in play mode, shown via JS when ?editor=true -->
+  <!-- Editor mode UI — shown via body.editor CSS class when ?editor=true -->
   <div id="editor-header">
-    <span class="eh-label">Editor Mode —</span>
+    <span class="eh-label">Editor —</span>
     <span id="haunt-name" contenteditable="true" spellcheck="false">New Haunt</span>
+    <span id="draft-saved-flash">Draft saved</span>
+    <button id="clear-draft-btn">Clear draft</button>
   </div>
 
   <div id="placement-preview">
@@ -526,6 +558,12 @@
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(map);
 
+    // --- Mode flags (needed before CIRCLE_DEFS for draft loading) ---
+    const debugEl     = document.getElementById('debug-log');
+    const DEBUG_MODE  = new URLSearchParams(window.location.search).get('debug')  === 'true';
+    const EDITOR_MODE = new URLSearchParams(window.location.search).get('editor') === 'true';
+    if (DEBUG_MODE) debugEl.style.display = 'block';
+
     // --- Player items ---
     // Each item: name (internal key), icon (emoji), quantity (integer), audio (file path or null),
     // startPresent (true = in inventory at game start with the given quantity).
@@ -565,6 +603,19 @@
         conditions: [],
       },
     ];
+
+    // --- Draft loading (editor only) ---
+    // Read once here so it can be used both to populate CIRCLE_DEFS and, later,
+    // to restore the haunt name in the editor startup block.
+    const DRAFT_KEY    = 'ghost-circles-draft';
+    const _editorDraft = EDITOR_MODE ? (() => {
+      try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch(e) { return null; }
+    })() : null;
+
+    if (_editorDraft?.circles?.length) {
+      CIRCLE_DEFS.length = 0;
+      _editorDraft.circles.forEach(c => CIRCLE_DEFS.push(c));
+    }
 
     // --- Build runtime state and Leaflet circles ---
     // circleRuntime[name] = { def, leafletCircle, state, inRange, visited, onMap,
@@ -677,11 +728,6 @@
     // --- Debug log ---
     // Visible only when the URL contains ?debug=true. All logging runs regardless;
     // it just writes to a hidden element in production.
-    const debugEl   = document.getElementById('debug-log');
-    const DEBUG_MODE  = new URLSearchParams(window.location.search).get('debug')  === 'true';
-    const EDITOR_MODE = new URLSearchParams(window.location.search).get('editor') === 'true';
-    if (DEBUG_MODE) debugEl.style.display = 'block';
-
     const debugLines = [];
 
     function debugLog(msg) {
@@ -1244,6 +1290,7 @@
         if (rt.centerMarker) rt.centerMarker.setLatLng([center.lat, center.lng]);
         exitRepositionMode();
         openPanel(name); // reopen panel with all properties intact
+        saveDraft();
       };
 
       const cancelReposition = () => {
@@ -1289,6 +1336,35 @@
 
         addEditorToCircle(name);
         selectCircle(name);
+        saveDraft();
+      };
+
+      // ---- Autosave ----
+
+      let _saveFlashTimer = null;
+      const showSavedFlash = () => {
+        const el = document.getElementById('draft-saved-flash');
+        el.classList.add('visible');
+        clearTimeout(_saveFlashTimer);
+        _saveFlashTimer = setTimeout(() => el.classList.remove('visible'), 1800);
+      };
+
+      const saveDraft = () => {
+        const hauntName = document.getElementById('haunt-name').textContent.trim();
+        try {
+          localStorage.setItem(DRAFT_KEY, JSON.stringify({
+            hauntName,
+            circles: CIRCLE_DEFS.map(def => ({ ...def })),
+          }));
+          showSavedFlash();
+        } catch(e) { /* private browsing or quota exceeded — silently skip */ }
+      };
+
+      // Debounced version for fast-changing text inputs (name, numbers, whisper path).
+      let _saveDraftTimer = null;
+      const saveDraftDebounced = () => {
+        clearTimeout(_saveDraftTimer);
+        _saveDraftTimer = setTimeout(saveDraft, 600);
       };
 
       // ---- Setup ----
@@ -1302,11 +1378,13 @@
         if (!audioCtx) initAudio().catch(() => {});
       }, { once: true });
 
-      // Show editor chrome
+      // Adding body.editor triggers the CSS rules that show all three editor chrome elements.
       document.body.classList.add('editor');
-      document.getElementById('editor-header').style.display   = 'flex';
-      document.getElementById('editor-controls').style.display = 'flex';
-      document.getElementById('editor-panel').style.display    = 'block';
+
+      // Restore haunt name from draft if one exists
+      if (_editorDraft?.hauntName) {
+        document.getElementById('haunt-name').textContent = _editorDraft.hauntName;
+      }
 
       // Wire up existing circles
       CIRCLE_DEFS.forEach(def => addEditorToCircle(def.name));
@@ -1325,6 +1403,9 @@
         if (playerMarker) map.setView(playerMarker.getLatLng(), 17);
       });
 
+      // Haunt name — autosave on edit
+      document.getElementById('haunt-name').addEventListener('input', saveDraftDebounced);
+
       // Panel: live-update circle properties
       document.getElementById('prop-name').addEventListener('input', function () {
         if (!selectedCircleName) return;
@@ -1336,6 +1417,7 @@
         circleRuntime[newName] = rt;
         delete circleRuntime[selectedCircleName];
         selectedCircleName = newName;
+        saveDraftDebounced();
       });
 
       document.getElementById('prop-radius').addEventListener('input', function () {
@@ -1345,21 +1427,25 @@
         const rt = circleRuntime[selectedCircleName];
         rt.def.radius = r;
         rt.leafletCircle.setRadius(r);
+        saveDraftDebounced();
       });
 
       document.getElementById('prop-priority').addEventListener('input', function () {
         if (!selectedCircleName) return;
         circleRuntime[selectedCircleName].def.priority = parseInt(this.value) || 50;
+        saveDraftDebounced();
       });
 
       document.getElementById('prop-repeat').addEventListener('input', function () {
         if (!selectedCircleName) return;
         circleRuntime[selectedCircleName].def.repeat = parseInt(this.value) || 1;
+        saveDraftDebounced();
       });
 
       document.getElementById('prop-whisper').addEventListener('input', function () {
         if (!selectedCircleName) return;
         circleRuntime[selectedCircleName].def.whisper = this.value.trim();
+        saveDraftDebounced();
       });
 
       document.getElementById('prop-visible').addEventListener('click', function () {
@@ -1368,6 +1454,7 @@
         this.classList.toggle('on', nowOn);
         // Update the haunt definition only — the editor always shows all circles on the map
         circleRuntime[selectedCircleName].def.visible = nowOn;
+        saveDraft();
       });
 
       document.getElementById('prop-starts-locked').addEventListener('click', function () {
@@ -1379,6 +1466,7 @@
         // Immediately reflect on the map: grey = locked, red = passive
         const color = nowOn ? COLOR_LOCKED : COLOR_PASSIVE;
         rt.leafletCircle.setStyle({ color, fillColor: color });
+        saveDraft();
       });
 
       document.getElementById('prop-hide-in-editor').addEventListener('click', function () {
@@ -1404,6 +1492,12 @@
       document.getElementById('reposition-confirm-btn').addEventListener('click', () => confirmReposition());
       document.getElementById('reposition-cancel-btn').addEventListener('click',  () => cancelReposition());
 
+      // Clear draft — removes localStorage entry and reloads to restore hardcoded defaults
+      document.getElementById('clear-draft-btn').addEventListener('click', () => {
+        localStorage.removeItem(DRAFT_KEY);
+        window.location.reload();
+      });
+
       // Close button
       document.getElementById('panel-close-btn').addEventListener('click', () => deselectCircle());
 
@@ -1418,6 +1512,7 @@
         delete circleRuntime[name];
         selectedCircleName = null;
         closePanel();
+        saveDraft();
       });
     }
 

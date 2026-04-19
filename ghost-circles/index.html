@@ -276,7 +276,7 @@
     .prop-label {
       font-size: 14px;
       color: rgba(255, 255, 255, 0.62);
-      width: 86px;
+      width: 110px;
       flex-shrink: 0;
     }
 
@@ -307,6 +307,10 @@
       -webkit-tap-highlight-color: transparent;
     }
     .prop-toggle.on { background: #2e7d32; }
+    /* Editor-only tool toggle — orange distinguishes it from haunt properties */
+    .prop-toggle.editor-toggle.on { background: #e65100; }
+    .prop-row-editor-tool { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); }
+    .prop-row-editor-tool .prop-label { color: rgba(255, 255, 255, 0.45); }
     .prop-toggle::after {
       content: '';
       position: absolute;
@@ -370,7 +374,7 @@
 <body>
 
   <div id="map"></div>
-  <div id="version">v3.1</div>
+  <div id="version">v3.11</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -422,8 +426,16 @@
                autocomplete="off" autocorrect="off" spellcheck="false" />
       </div>
       <div class="prop-row">
-        <span class="prop-label">Visible</span>
-        <button class="prop-toggle on" id="prop-visible" aria-label="Visible by default"></button>
+        <span class="prop-label">Visible at start</span>
+        <button class="prop-toggle on" id="prop-visible" aria-label="Visible at start"></button>
+      </div>
+      <div class="prop-row">
+        <span class="prop-label">Starts locked</span>
+        <button class="prop-toggle" id="prop-starts-locked" aria-label="Starts locked"></button>
+      </div>
+      <div class="prop-row prop-row-editor-tool">
+        <span class="prop-label">Hide in editor</span>
+        <button class="prop-toggle editor-toggle" id="prop-hide-in-editor" aria-label="Hide in editor"></button>
       </div>
 
       <div class="prop-section">When visited</div>
@@ -511,7 +523,8 @@
 
     CIRCLE_DEFS.forEach(def => {
       // evaluateConditions is hoisted (function declaration), so safe to call here.
-      const state = evaluateConditions(def) ? 'passive' : 'locked';
+      // startsLocked overrides conditions: if true, circle begins locked regardless.
+      const state = (!def.startsLocked && evaluateConditions(def)) ? 'passive' : 'locked';
       const color = state === 'locked' ? COLOR_LOCKED : COLOR_PASSIVE;
 
       // Always create the Leaflet circle object so state transitions work normally,
@@ -1021,13 +1034,16 @@
       };
 
       const openPanel = (name) => {
-        const def = circleRuntime[name].def;
+        const rt  = circleRuntime[name];
+        const def = rt.def;
         document.getElementById('prop-name').value     = def.name;
         document.getElementById('prop-radius').value   = def.radius;
         document.getElementById('prop-priority').value = def.priority ?? 50;
         document.getElementById('prop-repeat').value   = def.repeat ?? 1;
         document.getElementById('prop-whisper').value  = def.whisper ?? '';
         document.getElementById('prop-visible').classList.toggle('on', def.visible !== false);
+        document.getElementById('prop-starts-locked').classList.toggle('on', def.startsLocked === true);
+        document.getElementById('prop-hide-in-editor').classList.toggle('on', rt.editorHidden === true);
         // Force a layout tick so the CSS transition plays cleanly from translateY(100%)
         document.getElementById('editor-panel').getBoundingClientRect();
         document.getElementById('editor-panel').classList.add('open');
@@ -1088,7 +1104,7 @@
 
         const def = {
           name, lat: center.lat, lng: center.lng, radius,
-          priority: 50, visible: true, repeat: 1, whisper: '', conditions: [],
+          priority: 50, visible: true, startsLocked: false, repeat: 1, whisper: '', conditions: [],
         };
         CIRCLE_DEFS.push(def);
 
@@ -1183,14 +1199,32 @@
 
       document.getElementById('prop-visible').addEventListener('click', function () {
         if (!selectedCircleName) return;
+        const nowOn = !this.classList.contains('on');
+        this.classList.toggle('on', nowOn);
+        // Update the haunt definition only — the editor always shows all circles on the map
+        circleRuntime[selectedCircleName].def.visible = nowOn;
+      });
+
+      document.getElementById('prop-starts-locked').addEventListener('click', function () {
+        if (!selectedCircleName) return;
+        const nowOn = !this.classList.contains('on');
+        this.classList.toggle('on', nowOn);
+        circleRuntime[selectedCircleName].def.startsLocked = nowOn;
+      });
+
+      document.getElementById('prop-hide-in-editor').addEventListener('click', function () {
+        if (!selectedCircleName) return;
         const rt    = circleRuntime[selectedCircleName];
         const nowOn = !this.classList.contains('on');
         this.classList.toggle('on', nowOn);
-        rt.def.visible = nowOn;
-        // Immediately reflect for static-visibility circles
-        if (!rt.def.visibleConditions?.length && !rt.def.hideConditions?.length) {
-          if (nowOn && !rt.onMap)  { rt.leafletCircle.addTo(map); rt.onMap = true; }
-          if (!nowOn && rt.onMap)  { map.removeLayer(rt.leafletCircle); rt.onMap = false; }
+        rt.editorHidden = nowOn;
+        // Editor-only — no effect on def; just toggle Leaflet layer visibility
+        if (nowOn) {
+          if (rt.onMap)        { map.removeLayer(rt.leafletCircle); rt.onMap = false; }
+          if (rt.centerMarker) map.removeLayer(rt.centerMarker);
+        } else {
+          if (!rt.onMap)       { rt.leafletCircle.addTo(map); rt.onMap = true; }
+          if (rt.centerMarker) rt.centerMarker.addTo(map);
         }
       });
 

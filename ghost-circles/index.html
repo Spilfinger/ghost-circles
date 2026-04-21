@@ -857,7 +857,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.20</div>
+  <div id="version">v3.21</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1239,17 +1239,27 @@
       const itemFiles    = [...new Set(PLAYER_ITEMS.filter(i => i.audio).map(i => i.audio))];
       await Promise.all([
         ...whisperFiles.map(async file => {
-          const response = await fetch(`audio/${file}.m4a`);
-          if (!response.ok) throw new Error(`HTTP ${response.status} fetching audio/${file}.m4a`);
-          whisperBuffers[file] = await audioCtx.decodeAudioData(await response.arrayBuffer());
+          try {
+            const response = await fetch(`audio/${file}.m4a`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            whisperBuffers[file] = await audioCtx.decodeAudioData(await response.arrayBuffer());
+            debugLog(`buf ok: ${file} (${Math.round(whisperBuffers[file].duration)}s)`);
+          } catch(e) {
+            debugLog(`buf ERR: ${file} — ${e.message}`);
+          }
         }),
         ...itemFiles.map(async file => {
-          const response = await fetch(file);
-          if (!response.ok) throw new Error(`HTTP ${response.status} fetching ${file}`);
-          whisperBuffers[file] = await audioCtx.decodeAudioData(await response.arrayBuffer());
+          try {
+            const response = await fetch(file);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            whisperBuffers[file] = await audioCtx.decodeAudioData(await response.arrayBuffer());
+            debugLog(`buf ok: ${file}`);
+          } catch(e) {
+            debugLog(`buf ERR: ${file} — ${e.message}`);
+          }
         }),
       ]);
-      debugLog(`buffers loaded: ${whisperFiles.length + itemFiles.length}`);
+      debugLog(`buffers loaded: ${Object.keys(whisperBuffers).length}`);
       renderDebug();
     }
 
@@ -1258,11 +1268,14 @@
     // All playback routes through a GainNode so it can be faded on exit.
     function startWhisperPlayback(rt) {
       const buffer = whisperBuffers[rt.def.whisper];
-      if (!audioCtx || !buffer) return;
+      if (!audioCtx || !buffer) {
+        debugLog(`play SKIP: ${rt.def.whisper} — ${!audioCtx ? 'no ctx' : 'no buffer'} (keys: ${Object.keys(whisperBuffers).join(',') || 'none'})`);
+        return;
+      }
 
       const repeat = rt.def.repeat ?? 1;
       const label  = repeat === 0 ? '∞' : String(repeat);
-      debugLog(`play: ${rt.def.whisper} ×${label} (ctx:${audioCtx.state})`);
+      debugLog(`play: ${rt.def.whisper} ×${label} dur=${Math.round(buffer.duration)}s (ctx:${audioCtx.state})`);
 
       const gain = audioCtx.createGain();
       gain.gain.setValueAtTime(1, audioCtx.currentTime);

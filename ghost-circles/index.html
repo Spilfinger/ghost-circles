@@ -1368,6 +1368,12 @@
           rt.activeGain   = null;
           rt.activeSource = null;
           try { gain.disconnect(); } catch (_) {}
+          // Lock the circle if requested — prevents GPS wobble re-triggering the whisper
+          if (rt.def.lockOnEnd) {
+            rt.state   = 'locked';
+            rt.inRange = false;
+            rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
+          }
         }
       };
 

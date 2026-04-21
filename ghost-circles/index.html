@@ -411,6 +411,8 @@
     .prop-toggle.editor-toggle.on { background: #e65100; }
     .prop-row-editor-tool { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); }
     .prop-row-editor-tool .prop-label { color: rgba(255, 255, 255, 0.45); }
+    /* Visually dim a prop row whose control is not currently applicable */
+    .prop-row.prop-row-inactive { opacity: 0.3; pointer-events: none; }
 
     /* Volume slider */
     .prop-slider {
@@ -990,9 +992,13 @@
         <span class="prop-label">Repeat</span>
         <input id="prop-repeat" class="prop-input" type="number" min="0" />
       </div>
-      <div class="prop-row">
+      <div class="prop-row" id="prop-row-play-to-end">
         <span class="prop-label">Play to end on exit</span>
         <button class="prop-toggle" id="prop-play-to-end" aria-label="Play to end on exit"></button>
+      </div>
+      <div class="prop-row prop-row-inactive" id="prop-row-lock-on-end">
+        <span class="prop-label">Lock when done</span>
+        <button class="prop-toggle" id="prop-lock-on-end" aria-label="Lock when done"></button>
       </div>
       <div class="prop-row">
         <span class="prop-label">Whisper</span>
@@ -1382,10 +1388,16 @@
         // For a looping source, turn off the loop flag so it stops after this cycle.
         if (source.loop) source.loop = false;
         // Replace onended so the session cleans up when the source finishes.
+        // If lockOnEnd is also set, self-lock the circle to prevent re-triggering.
         source.onended = () => {
           rt.activeGain   = null;
           rt.activeSource = null;
           try { gain.disconnect(); } catch (_) {}
+          if (rt.def.lockOnEnd) {
+            rt.state   = 'locked';
+            rt.inRange = false;
+            rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
+          }
         };
         return;
       }
@@ -2102,7 +2114,11 @@
         document.getElementById('prop-radius').value   = def.radius;
         document.getElementById('prop-priority').value = def.priority ?? 50;
         document.getElementById('prop-repeat').value   = def.repeat ?? 1;
+        const isLoop = (def.repeat ?? 1) === 0;
         document.getElementById('prop-play-to-end').classList.toggle('on', def.playToEnd === true);
+        document.getElementById('prop-lock-on-end').classList.toggle('on', def.lockOnEnd === true);
+        document.getElementById('prop-row-play-to-end').classList.toggle('prop-row-inactive', isLoop);
+        document.getElementById('prop-row-lock-on-end').classList.toggle('prop-row-inactive', isLoop || !def.playToEnd);
         const vol = def.volume ?? 1;
         document.getElementById('prop-volume').value          = vol;
         document.getElementById('prop-volume-readout').textContent = `${Math.round(vol * 100)}%`;
@@ -2212,7 +2228,7 @@
 
         const def = {
           name, lat: center.lat, lng: center.lng, radius,
-          priority: 50, visible: true, startsLocked: false, repeat: 1, playToEnd: false, volume: 1.0, whisper: '', conditions: [],
+          priority: 50, visible: true, startsLocked: false, repeat: 1, playToEnd: false, lockOnEnd: false, volume: 1.0, whisper: '', conditions: [],
         };
         CIRCLE_DEFS.push(def);
 
@@ -2560,7 +2576,22 @@
 
       document.getElementById('prop-repeat').addEventListener('input', function () {
         if (!selectedCircleName) return;
-        circleRuntime[selectedCircleName].def.repeat = parseInt(this.value) || 1;
+        const val = parseInt(this.value);
+        // Treat blank/invalid as 1 except for 0 which is the deliberate loop value
+        const repeat = (val === 0) ? 0 : (val || 1);
+        const def = circleRuntime[selectedCircleName].def;
+        def.repeat = repeat;
+
+        const isLoop = repeat === 0;
+        if (isLoop) {
+          // Loop + playToEnd is meaningless — clear both flags and their toggles
+          def.playToEnd = false;
+          def.lockOnEnd = false;
+          document.getElementById('prop-play-to-end').classList.remove('on');
+          document.getElementById('prop-lock-on-end').classList.remove('on');
+        }
+        document.getElementById('prop-row-play-to-end').classList.toggle('prop-row-inactive', isLoop);
+        document.getElementById('prop-row-lock-on-end').classList.toggle('prop-row-inactive', isLoop || !def.playToEnd);
         saveDraftDebounced();
       });
 
@@ -2569,6 +2600,16 @@
         const nowOn = !this.classList.contains('on');
         this.classList.toggle('on', nowOn);
         circleRuntime[selectedCircleName].def.playToEnd = nowOn;
+        // Keep "Lock when done" row greyed out when "Play to end" is off
+        document.getElementById('prop-row-lock-on-end').classList.toggle('prop-row-inactive', !nowOn);
+        saveDraft();
+      });
+
+      document.getElementById('prop-lock-on-end').addEventListener('click', function () {
+        if (!selectedCircleName) return;
+        const nowOn = !this.classList.contains('on');
+        this.classList.toggle('on', nowOn);
+        circleRuntime[selectedCircleName].def.lockOnEnd = nowOn;
         saveDraft();
       });
 

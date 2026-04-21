@@ -957,7 +957,7 @@
       </div>
       <div class="prop-row">
         <span class="prop-label">Whisper</span>
-        <input id="prop-whisper" class="prop-input mono" type="text" placeholder="filename.m4a"
+        <input id="prop-whisper" class="prop-input mono" type="text" placeholder="filename"
                autocomplete="off" autocorrect="off" spellcheck="false" />
       </div>
       <div class="prop-row">
@@ -1219,7 +1219,7 @@
 
     // --- Whisper audio (Web Audio API — required for reliable iOS Safari playback) ---
     let audioCtx = null;
-    const whisperBuffers = {}; // keyed by stored value (bare filename for whispers, full path for items)
+    const whisperBuffers = {}; // keyed by stored value (bare name for whispers, full path for items)
 
     async function initAudio() {
       // AudioContext must be created inside a user gesture on iOS
@@ -1233,14 +1233,14 @@
       }
 
       // Pre-load every unique audio file.
-      // Circle whispers are stored as bare filenames (e.g. "near.m4a"); the engine
-      // always prepends "audio/" when fetching. Item audio files store full paths.
+      // Circle whispers are stored as bare filenames without extension (e.g. "near"); the
+      // engine always fetches from audio/<name>.m4a. Item audio files store full paths.
       const whisperFiles = [...new Set(CIRCLE_DEFS.map(d => d.whisper).filter(Boolean))];
       const itemFiles    = [...new Set(PLAYER_ITEMS.filter(i => i.audio).map(i => i.audio))];
       await Promise.all([
         ...whisperFiles.map(async file => {
-          const response = await fetch(`audio/${file}`);
-          if (!response.ok) throw new Error(`HTTP ${response.status} fetching audio/${file}`);
+          const response = await fetch(`audio/${file}.m4a`);
+          if (!response.ok) throw new Error(`HTTP ${response.status} fetching audio/${file}.m4a`);
           whisperBuffers[file] = await audioCtx.decodeAudioData(await response.arrayBuffer());
         }),
         ...itemFiles.map(async file => {
@@ -2276,7 +2276,7 @@
           row.appendChild(label);
           listEl.appendChild(row);
 
-          fetch(`audio/${file}`, { method: 'HEAD' })
+          fetch(`audio/${file}.m4a`, { method: 'HEAD' })
             .then(r => {
               icon.textContent = r.ok ? '✓' : '✗';
               icon.style.color = r.ok ? '#66bb6a' : '#e53935';

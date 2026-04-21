@@ -868,7 +868,7 @@
   <!-- Editor mode UI — shown via body.editor CSS class when ?editor=true -->
   <div id="editor-header">
     <span class="eh-label">Editor</span>
-    <span id="haunt-name" contenteditable="true" spellcheck="false">New Haunt</span>
+    <span id="haunt-name" contenteditable="true" spellcheck="false" autocorrect="off" autocapitalize="none">New Haunt</span>
     <div id="editor-header-actions">
       <button class="eh-icon-btn" id="export-haunt-btn" aria-label="Export haunt">↑</button>
       <button class="eh-icon-btn" id="import-haunt-btn" aria-label="Import haunt">↓</button>
@@ -941,7 +941,7 @@
       <div class="prop-section">Circle</div>
       <div class="prop-row">
         <span class="prop-label">Name</span>
-        <input id="prop-name" class="prop-input" type="text" autocomplete="off" autocorrect="off" spellcheck="false" />
+        <input id="prop-name" class="prop-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
       </div>
       <div class="prop-row">
         <span class="prop-label">Radius (m)</span>
@@ -958,7 +958,7 @@
       <div class="prop-row">
         <span class="prop-label">Whisper</span>
         <input id="prop-whisper" class="prop-input mono" type="text" placeholder="filename"
-               autocomplete="off" autocorrect="off" spellcheck="false" />
+               autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
       </div>
       <div class="prop-row">
         <span class="prop-label">Visible at start</span>

@@ -411,6 +411,41 @@
     .prop-toggle.editor-toggle.on { background: #e65100; }
     .prop-row-editor-tool { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); }
     .prop-row-editor-tool .prop-label { color: rgba(255, 255, 255, 0.45); }
+
+    /* Volume slider */
+    .prop-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.18);
+      outline: none;
+      cursor: pointer;
+    }
+    .prop-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+      cursor: pointer;
+    }
+    .prop-slider::-moz-range-thumb {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: #fff;
+      border: none;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+      cursor: pointer;
+    }
+    .prop-slider-readout {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.55);
+      min-width: 40px;
+      text-align: right;
+      flex-shrink: 0;
+    }
     .prop-toggle::after {
       content: '';
       position: absolute;
@@ -857,7 +892,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.21</div>
+  <div id="version">v3.22</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -956,9 +991,18 @@
         <input id="prop-repeat" class="prop-input" type="number" min="0" />
       </div>
       <div class="prop-row">
+        <span class="prop-label">Play to end on exit</span>
+        <button class="prop-toggle" id="prop-play-to-end" aria-label="Play to end on exit"></button>
+      </div>
+      <div class="prop-row">
         <span class="prop-label">Whisper</span>
         <input id="prop-whisper" class="prop-input mono" type="text" placeholder="filename"
                autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+      </div>
+      <div class="prop-row">
+        <span class="prop-label">Volume</span>
+        <input id="prop-volume" class="prop-slider" type="range" min="0" max="2" step="0.05" value="1" />
+        <span class="prop-slider-readout" id="prop-volume-readout">100%</span>
       </div>
       <div class="prop-row">
         <span class="prop-label">Visible at start</span>
@@ -1278,7 +1322,7 @@
       debugLog(`play: ${rt.def.whisper} ×${label} dur=${Math.round(buffer.duration)}s (ctx:${audioCtx.state})`);
 
       const gain = audioCtx.createGain();
-      gain.gain.setValueAtTime(1, audioCtx.currentTime);
+      gain.gain.setValueAtTime(rt.def.volume ?? 1, audioCtx.currentTime);
       gain.connect(audioCtx.destination);
       rt.activeGain = gain;
 
@@ -1331,11 +1375,25 @@
       const source = rt.activeSource;
       if (!gain) return;
 
-      // Clear immediately so playNextInSequence won't chain further plays
+      if (rt.def.playToEnd && source) {
+        // Let the current buffer play to its natural end — no fade, no forced stop.
+        // Prevent any further sequential plays by zeroing playsRemaining.
+        rt.playsRemaining = 0;
+        // For a looping source, turn off the loop flag so it stops after this cycle.
+        if (source.loop) source.loop = false;
+        // Replace onended so the session cleans up when the source finishes.
+        source.onended = () => {
+          rt.activeGain   = null;
+          rt.activeSource = null;
+          try { gain.disconnect(); } catch (_) {}
+        };
+        return;
+      }
+
+      // Standard exit: clear immediately so playNextInSequence won't chain further plays,
+      // then ramp gain to 0 over 1 s and stop.
       rt.activeGain   = null;
       rt.activeSource = null;
-
-      // Ramp gain to 0 over 0.5 s, then stop the source and disconnect
       gain.gain.setValueAtTime(gain.gain.value, audioCtx.currentTime);
       gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.0);
       setTimeout(() => {
@@ -2044,6 +2102,10 @@
         document.getElementById('prop-radius').value   = def.radius;
         document.getElementById('prop-priority').value = def.priority ?? 50;
         document.getElementById('prop-repeat').value   = def.repeat ?? 1;
+        document.getElementById('prop-play-to-end').classList.toggle('on', def.playToEnd === true);
+        const vol = def.volume ?? 1;
+        document.getElementById('prop-volume').value          = vol;
+        document.getElementById('prop-volume-readout').textContent = `${Math.round(vol * 100)}%`;
         document.getElementById('prop-whisper').value  = def.whisper ?? '';
         document.getElementById('prop-visible').classList.toggle('on', def.visible !== false);
         document.getElementById('prop-starts-locked').classList.toggle('on', def.startsLocked === true);
@@ -2150,7 +2212,7 @@
 
         const def = {
           name, lat: center.lat, lng: center.lng, radius,
-          priority: 50, visible: true, startsLocked: false, repeat: 1, whisper: '', conditions: [],
+          priority: 50, visible: true, startsLocked: false, repeat: 1, playToEnd: false, volume: 1.0, whisper: '', conditions: [],
         };
         CIRCLE_DEFS.push(def);
 
@@ -2364,19 +2426,20 @@
         // Update the haunt name in the header
         document.getElementById('haunt-name').textContent = haunt.metadata.title || 'Imported Haunt';
 
-        // Rebuild circleRuntime and Leaflet layers from the imported circles
+        // Rebuild circleRuntime and Leaflet layers from the imported circles.
+        // Editor always shows all circles, so all Leaflet layers are added to the map
+        // regardless of def.visible (which is a play-mode property).
         CIRCLE_DEFS.forEach(def => {
           const state = (!def.startsLocked && evaluateConditions(def)) ? 'passive' : 'locked';
           const color = state === 'locked' ? COLOR_LOCKED : COLOR_PASSIVE;
           const leafletCircle = L.circle([def.lat, def.lng], {
             radius: def.radius, color, fillColor: color,
             fillOpacity: 0.15, weight: 2,
-          });
-          const onMap = def.visibleConditions?.length ? false : def.visible !== false;
-          if (onMap) leafletCircle.addTo(map);
+          }).addTo(map);
           circleRuntime[def.name] = {
-            def, leafletCircle, state, inRange: false, visited: 0, onMap,
+            def, leafletCircle, state, inRange: false, visited: 0, onMap: true,
             activeGain: null, activeSource: null, playsRemaining: 0,
+            editorHidden: false,
           };
           addEditorToCircle(def.name);
         });
@@ -2437,6 +2500,14 @@
         document.getElementById('haunt-name').textContent = _editorDraft.hauntName;
       }
 
+      // Editor always shows all circles regardless of def.visible (a play-mode property).
+      // editorHidden is session-only and never saved, so always reset it on load.
+      CIRCLE_DEFS.forEach(def => {
+        const rt = circleRuntime[def.name];
+        rt.editorHidden = false;
+        if (!rt.onMap) { rt.leafletCircle.addTo(map); rt.onMap = true; }
+      });
+
       // Wire up existing circles
       CIRCLE_DEFS.forEach(def => addEditorToCircle(def.name));
 
@@ -2490,6 +2561,22 @@
       document.getElementById('prop-repeat').addEventListener('input', function () {
         if (!selectedCircleName) return;
         circleRuntime[selectedCircleName].def.repeat = parseInt(this.value) || 1;
+        saveDraftDebounced();
+      });
+
+      document.getElementById('prop-play-to-end').addEventListener('click', function () {
+        if (!selectedCircleName) return;
+        const nowOn = !this.classList.contains('on');
+        this.classList.toggle('on', nowOn);
+        circleRuntime[selectedCircleName].def.playToEnd = nowOn;
+        saveDraft();
+      });
+
+      document.getElementById('prop-volume').addEventListener('input', function () {
+        if (!selectedCircleName) return;
+        const val = parseFloat(this.value);
+        circleRuntime[selectedCircleName].def.volume = val;
+        document.getElementById('prop-volume-readout').textContent = `${Math.round(val * 100)}%`;
         saveDraftDebounced();
       });
 

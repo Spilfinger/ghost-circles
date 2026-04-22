@@ -894,7 +894,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.24</div>
+  <div id="version">v3.25</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1237,12 +1237,11 @@
         // Skip circles locked by lockOnEnd — they have no explicit conditions (empty array
         // always evaluates to true), so they must not be auto-promoted. They remain locked
         // until the designer defines conditions that explicitly re-open them.
-        if (rt.lockedByEnd && !def.conditions?.length) {
+        if (rt.lockedByEnd) {
           debugLog(`unlock SKIP: ${def.name} (lockedByEnd)`);
           return;
         }
         if (rt.state === 'locked' && evaluateConditions(def)) {
-          rt.lockedByEnd = false; // explicit conditions re-opened this circle
           rt.state = 'passive';
           rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
           // Map visibility on unlock: only for circles without dynamic visibility conditions.
@@ -1631,7 +1630,7 @@
           // Lock condition cleared and unlock conditions still met — restore to passive.
           // Exception: circles locked by lockOnEnd must not be auto-restored here — their
           // lockedByEnd flag suppresses this until explicit conditions are defined.
-          if (rt.lockedByEnd) { debugLog(`pass4 SKIP: ${def.name} (lockedByEnd)`); return; }
+          if (rt.lockedByEnd) { debugLog(`pass4 SKIP: ${def.name} (lockedByEnd)`); return; } // absolute priority — ignore conditions
           // Pre-set inRange so it can activate on the very next GPS tick if the player is inside.
           rt.state   = 'passive';
           rt.inRange = userLatLng.distanceTo(L.latLng(def.lat, def.lng)) <= def.radius;

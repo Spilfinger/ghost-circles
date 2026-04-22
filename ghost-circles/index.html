@@ -894,7 +894,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.23</div>
+  <div id="version">v3.24</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1237,7 +1237,10 @@
         // Skip circles locked by lockOnEnd — they have no explicit conditions (empty array
         // always evaluates to true), so they must not be auto-promoted. They remain locked
         // until the designer defines conditions that explicitly re-open them.
-        if (rt.lockedByEnd && !def.conditions?.length) return;
+        if (rt.lockedByEnd && !def.conditions?.length) {
+          debugLog(`unlock SKIP: ${def.name} (lockedByEnd)`);
+          return;
+        }
         if (rt.state === 'locked' && evaluateConditions(def)) {
           rt.lockedByEnd = false; // explicit conditions re-opened this circle
           rt.state = 'passive';
@@ -1335,8 +1338,9 @@
         return;
       }
 
-      // Global audio lock: if any playToEnd whisper is still in flight, block new playback.
-      if (playToEndLock && playToEndLock !== rt) {
+      // Global audio lock: if any playToEnd whisper is still in flight, block all new
+      // playback — including re-entry of the same circle — until it finishes naturally.
+      if (playToEndLock) {
         debugLog(`play BLOCKED: ${rt.def.whisper} — playToEnd lock held by ${playToEndLock.def.whisper}`);
         return;
       }
@@ -1346,7 +1350,10 @@
       debugLog(`play: ${rt.def.whisper} ×${label} dur=${Math.round(buffer.duration)}s (ctx:${audioCtx.state})`);
 
       // If this circle uses playToEnd, claim the global lock.
-      if (rt.def.playToEnd) playToEndLock = rt;
+      if (rt.def.playToEnd) {
+        playToEndLock = rt;
+        debugLog(`playToEnd lock claimed: ${rt.def.whisper}`);
+      }
 
       const gain = audioCtx.createGain();
       gain.gain.setValueAtTime(rt.def.volume ?? 1, audioCtx.currentTime);
@@ -1389,13 +1396,14 @@
           rt.activeGain   = null;
           rt.activeSource = null;
           try { gain.disconnect(); } catch (_) {}
-          if (playToEndLock === rt) playToEndLock = null;
+          if (playToEndLock === rt) { playToEndLock = null; debugLog(`playToEnd lock released: ${rt.def.whisper} (natural end)`); }
           // Lock the circle if requested — prevents GPS wobble re-triggering the whisper
           if (rt.def.lockOnEnd) {
             rt.state       = 'locked';
             rt.inRange     = false;
             rt.lockedByEnd = true;
             rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
+            debugLog(`lockedByEnd: ${rt.def.whisper}`);
           }
         }
       };
@@ -1422,12 +1430,13 @@
           rt.activeGain   = null;
           rt.activeSource = null;
           try { gain.disconnect(); } catch (_) {}
-          if (playToEndLock === rt) playToEndLock = null;
+          if (playToEndLock === rt) { playToEndLock = null; debugLog(`playToEnd lock released: ${rt.def.whisper} (exit path)`); }
           if (rt.def.lockOnEnd) {
             rt.state       = 'locked';
             rt.inRange     = false;
             rt.lockedByEnd = true;
             rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
+            debugLog(`lockedByEnd: ${rt.def.whisper}`);
           }
         };
         return;
@@ -1620,6 +1629,9 @@
           rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
         } else if (rt.state === 'locked' && !evaluateLockConditions(def) && evaluateConditions(def)) {
           // Lock condition cleared and unlock conditions still met — restore to passive.
+          // Exception: circles locked by lockOnEnd must not be auto-restored here — their
+          // lockedByEnd flag suppresses this until explicit conditions are defined.
+          if (rt.lockedByEnd) { debugLog(`pass4 SKIP: ${def.name} (lockedByEnd)`); return; }
           // Pre-set inRange so it can activate on the very next GPS tick if the player is inside.
           rt.state   = 'passive';
           rt.inRange = userLatLng.distanceTo(L.latLng(def.lat, def.lng)) <= def.radius;

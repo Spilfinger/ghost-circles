@@ -894,7 +894,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.22</div>
+  <div id="version">v3.23</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1139,7 +1139,7 @@
 
     // --- Build runtime state and Leaflet circles ---
     // circleRuntime[name] = { def, leafletCircle, state, inRange, visited, onMap,
-    //                         activeGain, activeSource, playsRemaining }
+    //                         activeGain, activeSource, playsRemaining, lockedByEnd }
     // state:          'locked' | 'passive' | 'active'
     // inRange:        true when the player is physically within the circle's radius
     // visited:        number of times the circle has transitioned passive → active
@@ -1147,6 +1147,7 @@
     // activeGain:     the GainNode for the current audio session (null if not playing)
     // activeSource:   the current BufferSourceNode (null if not playing)
     // playsRemaining: how many more sequential plays remain in the current session
+    // lockedByEnd:    true when the circle was locked by lockOnEnd — suppresses auto-unlock
     const circleRuntime = {};
 
     CIRCLE_DEFS.forEach(def => {
@@ -1173,6 +1174,7 @@
       circleRuntime[def.name] = {
         def, leafletCircle, state, inRange: false, visited: 0, onMap,
         activeGain: null, activeSource: null, playsRemaining: 0,
+        lockedByEnd: false,
       };
     });
 
@@ -1232,7 +1234,12 @@
       let anyPromoted = false;
       CIRCLE_DEFS.forEach(def => {
         const rt = circleRuntime[def.name];
+        // Skip circles locked by lockOnEnd — they have no explicit conditions (empty array
+        // always evaluates to true), so they must not be auto-promoted. They remain locked
+        // until the designer defines conditions that explicitly re-open them.
+        if (rt.lockedByEnd && !def.conditions?.length) return;
         if (rt.state === 'locked' && evaluateConditions(def)) {
+          rt.lockedByEnd = false; // explicit conditions re-opened this circle
           rt.state = 'passive';
           rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
           // Map visibility on unlock: only for circles without dynamic visibility conditions.
@@ -1270,6 +1277,11 @@
     // --- Whisper audio (Web Audio API — required for reliable iOS Safari playback) ---
     let audioCtx = null;
     const whisperBuffers = {}; // keyed by stored value (bare name for whispers, full path for items)
+
+    // Global audio lock: when a playToEnd whisper is in flight, new whisper playback is
+    // blocked until that whisper finishes naturally. Holds the rt of the locked whisper,
+    // or null when no playToEnd whisper is playing.
+    let playToEndLock = null;
 
     async function initAudio() {
       // AudioContext must be created inside a user gesture on iOS
@@ -1323,9 +1335,18 @@
         return;
       }
 
+      // Global audio lock: if any playToEnd whisper is still in flight, block new playback.
+      if (playToEndLock && playToEndLock !== rt) {
+        debugLog(`play BLOCKED: ${rt.def.whisper} — playToEnd lock held by ${playToEndLock.def.whisper}`);
+        return;
+      }
+
       const repeat = rt.def.repeat ?? 1;
       const label  = repeat === 0 ? '∞' : String(repeat);
       debugLog(`play: ${rt.def.whisper} ×${label} dur=${Math.round(buffer.duration)}s (ctx:${audioCtx.state})`);
+
+      // If this circle uses playToEnd, claim the global lock.
+      if (rt.def.playToEnd) playToEndLock = rt;
 
       const gain = audioCtx.createGain();
       gain.gain.setValueAtTime(rt.def.volume ?? 1, audioCtx.currentTime);
@@ -1368,10 +1389,12 @@
           rt.activeGain   = null;
           rt.activeSource = null;
           try { gain.disconnect(); } catch (_) {}
+          if (playToEndLock === rt) playToEndLock = null;
           // Lock the circle if requested — prevents GPS wobble re-triggering the whisper
           if (rt.def.lockOnEnd) {
-            rt.state   = 'locked';
-            rt.inRange = false;
+            rt.state       = 'locked';
+            rt.inRange     = false;
+            rt.lockedByEnd = true;
             rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
           }
         }
@@ -1399,9 +1422,11 @@
           rt.activeGain   = null;
           rt.activeSource = null;
           try { gain.disconnect(); } catch (_) {}
+          if (playToEndLock === rt) playToEndLock = null;
           if (rt.def.lockOnEnd) {
-            rt.state   = 'locked';
-            rt.inRange = false;
+            rt.state       = 'locked';
+            rt.inRange     = false;
+            rt.lockedByEnd = true;
             rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
           }
         };
@@ -2246,6 +2271,7 @@
         circleRuntime[name] = {
           def, leafletCircle, state: 'passive', inRange: false, visited: 0, onMap: true,
           activeGain: null, activeSource: null, playsRemaining: 0,
+          lockedByEnd: false,
         };
 
         placementActive = false;
@@ -2461,7 +2487,7 @@
           circleRuntime[def.name] = {
             def, leafletCircle, state, inRange: false, visited: 0, onMap: true,
             activeGain: null, activeSource: null, playsRemaining: 0,
-            editorHidden: false,
+            lockedByEnd: false, editorHidden: false,
           };
           addEditorToCircle(def.name);
         });

@@ -894,7 +894,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.3</div>
+  <div id="version">v3.31</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1047,6 +1047,10 @@
       <div class="prop-section">When visited</div>
       <div id="panel-actions-list"></div>
       <button class="panel-add-btn" id="panel-add-action-btn">+ Add action</button>
+
+      <div class="prop-section">When exited</div>
+      <div id="panel-exit-actions-list"></div>
+      <button class="panel-add-btn" id="panel-add-exit-action-btn">+ Add action</button>
 
       <button id="panel-delete-btn">Delete circle</button>
     </div>
@@ -1604,7 +1608,33 @@
           rt.state = 'passive';
           rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
           stopWhisperPlayback(rt);
-          if (!rt.inRange && navigator.vibrate) navigator.vibrate([200, 100, 200]);
+          if (!rt.inRange) {
+            if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+            // Fire exitActions on physical exit only (not priority demotion)
+            (def.exitActions || []).forEach(action => {
+              const trt = circleRuntime[action.target];
+              if (!trt) return;
+              if (action.type === 'lock') {
+                if (trt.state === 'active') stopWhisperPlayback(trt);
+                trt.state       = 'locked';
+                trt.inRange     = false;
+                trt.lockedByEnd = true;
+                trt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
+                debugLog(`exit action: lock → ${action.target}`);
+              } else if (action.type === 'unlock') {
+                trt.state       = 'passive';
+                trt.lockedByEnd = false;
+                trt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
+                debugLog(`exit action: unlock → ${action.target}`);
+              } else if (action.type === 'show') {
+                if (!trt.onMap) { trt.leafletCircle.addTo(map); trt.onMap = true; }
+                debugLog(`exit action: show → ${action.target}`);
+              } else if (action.type === 'hide') {
+                if (trt.onMap) { map.removeLayer(trt.leafletCircle); trt.onMap = false; }
+                debugLog(`exit action: hide → ${action.target}`);
+              }
+            });
+          }
         }
       });
 
@@ -1883,6 +1913,110 @@
           row.appendChild(del);
           el.appendChild(row);
         });
+      };
+
+      // ---- Exit actions ("When exited") ----
+      // exitActions are stored directly on the source circle's def.exitActions array.
+      // Each entry: { type: 'lock'|'unlock'|'show'|'hide', target: <circleName> }
+
+      const EXIT_ACTION_TYPES = [
+        { key: 'lock',   label: 'Lock a circle',          display: 'On exit lock' },
+        { key: 'unlock', label: 'Unlock a circle',        display: 'On exit unlock' },
+        { key: 'show',   label: 'Show a circle on map',   display: 'On exit show' },
+        { key: 'hide',   label: 'Hide a circle from map', display: 'On exit hide' },
+      ];
+
+      const renderExitActions = (name) => {
+        const el = document.getElementById('panel-exit-actions-list');
+        if (!el) return;
+        el.innerHTML = '';
+        const def = circleRuntime[name]?.def;
+        if (!def) return;
+        const arr = def.exitActions || [];
+        if (arr.length === 0) {
+          el.innerHTML = '<p class="panel-empty">None</p>';
+          return;
+        }
+        arr.forEach((action, idx) => {
+          const typeLabel = EXIT_ACTION_TYPES.find(t => t.key === action.type)?.display ?? action.type;
+          const row = document.createElement('div');
+          row.className = 'action-row';
+          const lbl = document.createElement('span');
+          lbl.className   = 'action-label';
+          lbl.textContent = `${typeLabel}: ${action.target}`;
+          const del = document.createElement('button');
+          del.className   = 'action-delete-btn';
+          del.textContent = '✕';
+          del.setAttribute('aria-label', 'Delete exit action');
+          del.addEventListener('click', () => {
+            def.exitActions.splice(idx, 1);
+            renderExitActions(name);
+            saveDraft();
+          });
+          row.appendChild(lbl);
+          row.appendChild(del);
+          el.appendChild(row);
+        });
+      };
+
+      let _pickerExitActionType = null; // type key chosen in step 1 of exit action picker
+
+      const renderExitActionPickerStep2 = () => {
+        document.getElementById('action-picker-title').textContent = 'Choose circle';
+        const body = document.getElementById('action-picker-body');
+        body.innerHTML = '';
+        const others = CIRCLE_DEFS.filter(d => d.name !== selectedCircleName);
+        if (others.length === 0) {
+          const p = document.createElement('p');
+          p.className     = 'panel-empty';
+          p.style.padding = '12px 0';
+          p.textContent   = 'No other circles in this haunt yet';
+          body.appendChild(p);
+          return;
+        }
+        others.forEach(def => {
+          const btn = document.createElement('button');
+          btn.className   = 'picker-option-btn';
+          btn.textContent = def.name;
+          btn.addEventListener('click', () => {
+            const srcDef = circleRuntime[selectedCircleName]?.def;
+            if (srcDef) {
+              if (!srcDef.exitActions) srcDef.exitActions = [];
+              const already = srcDef.exitActions.some(
+                a => a.type === _pickerExitActionType && a.target === def.name
+              );
+              if (!already) {
+                srcDef.exitActions.push({ type: _pickerExitActionType, target: def.name });
+              }
+            }
+            closePicker();
+            renderExitActions(selectedCircleName);
+            saveDraft();
+          });
+          body.appendChild(btn);
+        });
+      };
+
+      const openExitActionPicker = () => {
+        if (!selectedCircleName) return;
+        pickerActive = true;
+        _pickerMode = 'exitAction';
+        _pickerExitActionType = null;
+        document.getElementById('action-picker-title').textContent = 'Choose action';
+        const body = document.getElementById('action-picker-body');
+        body.innerHTML = '';
+        EXIT_ACTION_TYPES.forEach(({ key, label }) => {
+          const btn = document.createElement('button');
+          btn.className   = 'picker-option-btn';
+          btn.textContent = label;
+          btn.addEventListener('click', () => {
+            _pickerExitActionType = key;
+            renderExitActionPickerStep2();
+          });
+          body.appendChild(btn);
+        });
+        document.getElementById('action-picker').classList.add('open');
+        document.getElementById('picker-backdrop').classList.add('open');
       };
 
       // ---- Action picker ----
@@ -2171,6 +2305,7 @@
         renderConditions(name);
         renderAllConditionArrays(name);
         renderActions(name);
+        renderExitActions(name);
         // Force a layout tick so the CSS transition plays cleanly from translateY(100%)
         document.getElementById('editor-panel').getBoundingClientRect();
         document.getElementById('editor-panel').classList.add('open');
@@ -2270,7 +2405,7 @@
 
         const def = {
           name, lat: center.lat, lng: center.lng, radius,
-          priority: 50, visible: true, startsLocked: false, repeat: 1, playToEnd: false, lockOnEnd: false, volume: 1.0, whisper: '', conditions: [],
+          priority: 50, visible: true, startsLocked: false, repeat: 1, playToEnd: false, lockOnEnd: false, volume: 1.0, whisper: '', conditions: [], exitActions: [],
         };
         CIRCLE_DEFS.push(def);
 
@@ -2709,6 +2844,7 @@
 
       // Add action button + picker cancel + backdrop
       document.getElementById('panel-add-action-btn').addEventListener('click', () => openActionPicker());
+      document.getElementById('panel-add-exit-action-btn').addEventListener('click', () => openExitActionPicker());
       document.getElementById('action-picker-cancel').addEventListener('click', () => closePicker());
       document.getElementById('picker-backdrop').addEventListener('click', () => closePicker());
 

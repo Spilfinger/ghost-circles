@@ -894,7 +894,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.31</div>
+  <div id="version">v3.32</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1408,6 +1408,10 @@
             rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
             debugLog(`lockedByEnd: ${rt.def.whisper}`);
           }
+          // Fire exit actions — player stayed inside through natural completion, lockOnEnd
+          // is the effective "exit" moment. Also fires for non-lockOnEnd circles that have
+          // exitActions and played to completion while the player was still inside.
+          fireExitActions(rt);
         }
       };
 
@@ -1441,6 +1445,10 @@
             rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
             debugLog(`lockedByEnd: ${rt.def.whisper}`);
           }
+          // Fire deferred exit actions — they were held back when the player physically
+          // exited because audio was still playing (playToEnd). pendingExitActions was set
+          // at that moment; fire now that audio has naturally ended.
+          if (rt.pendingExitActions) fireExitActions(rt);
         };
         return;
       }
@@ -1455,6 +1463,35 @@
         try { if (source) source.stop(); } catch (_) {}
         try { gain.disconnect(); } catch (_) {}
       }, 1100);
+    }
+
+    // Fire all exitActions defined on a circle. Called on physical exit (immediately or
+    // deferred to audio end when playToEnd is set) and on lockOnEnd natural completion.
+    function fireExitActions(rt) {
+      rt.pendingExitActions = false;
+      (rt.def.exitActions || []).forEach(action => {
+        const trt = circleRuntime[action.target];
+        if (!trt) return;
+        if (action.type === 'lock') {
+          if (trt.state === 'active') stopWhisperPlayback(trt);
+          trt.state       = 'locked';
+          trt.inRange     = false;
+          trt.lockedByEnd = true;
+          trt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
+          debugLog(`exit action: lock → ${action.target}`);
+        } else if (action.type === 'unlock') {
+          trt.state       = 'passive';
+          trt.lockedByEnd = false;
+          trt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
+          debugLog(`exit action: unlock → ${action.target}`);
+        } else if (action.type === 'show') {
+          if (!trt.onMap) { trt.leafletCircle.addTo(map); trt.onMap = true; }
+          debugLog(`exit action: show → ${action.target}`);
+        } else if (action.type === 'hide') {
+          if (trt.onMap) { map.removeLayer(trt.leafletCircle); trt.onMap = false; }
+          debugLog(`exit action: hide → ${action.target}`);
+        }
+      });
     }
 
     // --- Player inventory ---
@@ -1610,30 +1647,14 @@
           stopWhisperPlayback(rt);
           if (!rt.inRange) {
             if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-            // Fire exitActions on physical exit only (not priority demotion)
-            (def.exitActions || []).forEach(action => {
-              const trt = circleRuntime[action.target];
-              if (!trt) return;
-              if (action.type === 'lock') {
-                if (trt.state === 'active') stopWhisperPlayback(trt);
-                trt.state       = 'locked';
-                trt.inRange     = false;
-                trt.lockedByEnd = true;
-                trt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
-                debugLog(`exit action: lock → ${action.target}`);
-              } else if (action.type === 'unlock') {
-                trt.state       = 'passive';
-                trt.lockedByEnd = false;
-                trt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
-                debugLog(`exit action: unlock → ${action.target}`);
-              } else if (action.type === 'show') {
-                if (!trt.onMap) { trt.leafletCircle.addTo(map); trt.onMap = true; }
-                debugLog(`exit action: show → ${action.target}`);
-              } else if (action.type === 'hide') {
-                if (trt.onMap) { map.removeLayer(trt.leafletCircle); trt.onMap = false; }
-                debugLog(`exit action: hide → ${action.target}`);
-              }
-            });
+            // Fire exitActions on physical exit only (not priority demotion).
+            // If playToEnd audio is still in flight (rt.activeGain still set after
+            // stopWhisperPlayback returned), defer until the onended callback fires.
+            if (rt.def.playToEnd && rt.activeGain) {
+              rt.pendingExitActions = true;
+            } else {
+              fireExitActions(rt);
+            }
           }
         }
       });

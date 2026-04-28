@@ -1469,6 +1469,19 @@
     let playToEndLock = null;
     let lastKnownLatLng = null; // updated on every GPS fix; used to re-run proximity on lock release
 
+    // Called immediately after the playToEnd lock is released (from both onended paths).
+    // 1. Any circle that is already active+inRange but has no audio playing was blocked by
+    //    the lock — start its whisper now.
+    // 2. Run a full proximity check so passive circles the player is inside can activate.
+    function onPlayToEndLockReleased() {
+      Object.values(circleRuntime).forEach(crt => {
+        if (crt.state === 'active' && crt.inRange && !crt.activeGain) {
+          startWhisperPlayback(crt);
+        }
+      });
+      if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
+    }
+
     async function initAudio() {
       // AudioContext must be created inside a user gesture on iOS
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1592,9 +1605,7 @@
           // is the effective "exit" moment. Also fires for non-lockOnEnd circles that have
           // exitActions and played to completion while the player was still inside.
           fireExitActions(rt);
-          // Re-run the full proximity check so any circles the player is currently inside
-          // are evaluated now that the playToEnd lock has been released.
-          if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
+          onPlayToEndLockReleased();
         }
       };
 
@@ -1632,9 +1643,7 @@
           // exited because audio was still playing (playToEnd). pendingExitActions was set
           // at that moment; fire now that audio has naturally ended.
           if (rt.pendingExitActions) fireExitActions(rt);
-          // Re-run the full proximity check so any circles the player walked into while the
-          // playToEnd lock was held are evaluated now that it has been released.
-          if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
+          onPlayToEndLockReleased();
         };
         return;
       }

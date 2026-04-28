@@ -138,7 +138,7 @@
     body.haunt #haunt-title-bar   { display: flex; }
     body.haunt .leaflet-top.leaflet-left { top: calc(60px + env(safe-area-inset-top)); }
     body.haunt #version           { top: calc(60px + env(safe-area-inset-top)); }
-    body.haunt #inventory         { top: calc(60px + env(safe-area-inset-top)); }
+    body.haunt #inventory         { top: calc(60px + env(safe-area-inset-top) + 36px); }
 
     /* Push Leaflet zoom controls and version pill below the editor header */
     body.editor .leaflet-top.leaflet-left { top: calc(60px + env(safe-area-inset-top)); }
@@ -1047,7 +1047,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.41</div>
+  <div id="version">v3.42</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1467,6 +1467,7 @@
     // blocked until that whisper finishes naturally. Holds the rt of the locked whisper,
     // or null when no playToEnd whisper is playing.
     let playToEndLock = null;
+    let lastKnownLatLng = null; // updated on every GPS fix; used to re-run proximity on lock release
 
     async function initAudio() {
       // AudioContext must be created inside a user gesture on iOS
@@ -1591,6 +1592,9 @@
           // is the effective "exit" moment. Also fires for non-lockOnEnd circles that have
           // exitActions and played to completion while the player was still inside.
           fireExitActions(rt);
+          // Re-run the full proximity check so any circles the player is currently inside
+          // are evaluated now that the playToEnd lock has been released.
+          if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
         }
       };
 
@@ -1628,6 +1632,9 @@
           // exited because audio was still playing (playToEnd). pendingExitActions was set
           // at that moment; fire now that audio has naturally ended.
           if (rt.pendingExitActions) fireExitActions(rt);
+          // Re-run the full proximity check so any circles the player walked into while the
+          // playToEnd lock was held are evaluated now that it has been released.
+          if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
         };
         return;
       }
@@ -1897,6 +1904,7 @@
     function onPosition(pos) {
       const { latitude, longitude } = pos.coords;
       lastFixTime = Date.now();
+      lastKnownLatLng = { lat: latitude, lng: longitude };
 
       if (!playerMarker) {
         // First fix — create marker and pan to it

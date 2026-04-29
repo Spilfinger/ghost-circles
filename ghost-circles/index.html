@@ -1503,7 +1503,10 @@
           try {
             const response = await fetch(`audio/${file}.m4a`);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            whisperBuffers[file] = await audioCtx.decodeAudioData(await response.arrayBuffer());
+            // Use explicit callback form: Safari's promise-returning decodeAudioData can
+            // resolve before the buffer is ready, causing whisperBuffers to appear empty.
+            const arrayBuffer = await response.arrayBuffer();
+            whisperBuffers[file] = await new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej));
             debugLog(`buf ok: ${file} (${Math.round(whisperBuffers[file].duration)}s)`);
           } catch(e) {
             debugLog(`buf ERR: ${file} — ${e.message}`);
@@ -1513,7 +1516,8 @@
           try {
             const response = await fetch(file);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            whisperBuffers[file] = await audioCtx.decodeAudioData(await response.arrayBuffer());
+            const arrayBuffer = await response.arrayBuffer();
+            whisperBuffers[file] = await new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej));
             debugLog(`buf ok: ${file}`);
           } catch(e) {
             debugLog(`buf ERR: ${file} — ${e.message}`);

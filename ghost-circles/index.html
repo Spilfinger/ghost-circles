@@ -1047,7 +1047,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.43test</div>
+  <div id="version">v3.43test2</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1776,6 +1776,8 @@
       // After init, immediately check proximity in case the player is already inside a
       // circle — activates and plays the whisper without requiring exit+re-entry.
       initAudio().then(() => {
+        const keys = Object.keys(whisperBuffers);
+        debugLog(`initAudio done: ${keys.length} buf(s): ${keys.join(',') || 'none'}`);
         if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
       }).catch(() => {});
       // Request wake lock to keep screen on during play

@@ -1047,7 +1047,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.42</div>
+  <div id="version">v3.43</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1474,18 +1474,12 @@
     //    the lock — start its whisper now.
     // 2. Run a full proximity check so passive circles the player is inside can activate.
     function onPlayToEndLockReleased() {
-      const allRt = Object.values(circleRuntime);
-      const activeSilent = allRt.filter(crt => crt.state === 'active' && crt.inRange && !crt.activeGain);
-      const passiveInRange = allRt.filter(crt => crt.state === 'passive' && crt.inRange);
-      debugLog(`lockReleased: ${activeSilent.length} active+silent, ${passiveInRange.length} passive+inRange`);
-      activeSilent.forEach(crt => {
-        debugLog(`lockReleased → startWhisper: ${crt.def.whisper || crt.def.name}`);
-        startWhisperPlayback(crt);
+      Object.values(circleRuntime).forEach(crt => {
+        if (crt.state === 'active' && crt.inRange && !crt.activeGain) {
+          startWhisperPlayback(crt);
+        }
       });
-      if (lastKnownLatLng) {
-        debugLog(`lockReleased → checkProximity`);
-        checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
-      }
+      if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
     }
 
     async function initAudio() {
@@ -1543,7 +1537,7 @@
       // Global audio lock: if any playToEnd whisper is still in flight, block all new
       // playback — including re-entry of the same circle — until it finishes naturally.
       if (playToEndLock) {
-        debugLog(`play BLOCKED: ${rt.def.whisper} (state:${rt.state}) — lock held by ${playToEndLock.def.whisper}`);
+        debugLog(`play BLOCKED: ${rt.def.whisper} — playToEnd lock held by ${playToEndLock.def.whisper}`);
         return;
       }
 
@@ -1834,7 +1828,6 @@
           rt.visited += 1;
           rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
           if (navigator.vibrate) navigator.vibrate(200);
-          debugLog(`pass3 active: ${def.name} (pri:${def.priority ?? 50} maxPri:${maxPriority})`);
           startWhisperPlayback(rt);
           // Apply inventory actions defined on this circle
           if (def.inventoryActions) {

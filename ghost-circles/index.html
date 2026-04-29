@@ -1768,8 +1768,12 @@
       this.remove();
       // Start GPS immediately — never let audio init block it
       startTracking();
-      // Init audio in parallel; errors are silenced so GPS is unaffected
-      initAudio().catch(() => {});
+      // Init audio in parallel; errors are silenced so GPS is unaffected.
+      // After init, immediately check proximity in case the player is already inside a
+      // circle — activates and plays the whisper without requiring exit+re-entry.
+      initAudio().then(() => {
+        if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
+      }).catch(() => {});
       // Request wake lock to keep screen on during play
       requestWakeLock();
     });

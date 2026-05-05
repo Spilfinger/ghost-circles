@@ -4,9 +4,9 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.4) — Actions Release
+## Current State (v3.44) — Items Release
 
-The engine and editor are feature-complete for single-haunt, GPS-driven experiences. Circles can now trigger effects on other circles both when entered (`inventoryActions`) and when physically exited (`exitActions`). v3.4 is the stable authoring platform on which experiences are built.
+The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system. Circles can trigger effects on other circles and on items both when entered (`inventoryActions`) and when physically exited (`exitActions`). Items can be defined, edited, and wired to actions and conditions entirely within the browser editor. v3.44 is the stable authoring platform on which experiences are built.
 
 ---
 
@@ -78,11 +78,13 @@ Requires `playToEnd: true` to be practically useful. The editor greys out `lockO
 
 ### Inventory actions (when visited)
 `inventoryActions` on circles: optional array of actions that fire on passive → active (player entry):
-- `{ type: "add", item: <name> }` — increments item quantity by 1
-- `{ type: "remove", item: <name> }` — decrements item quantity by 1 (minimum 0)
+- `{ type: "addItem", item: <name> }` — increments item quantity by 1
+- `{ type: "removeItem", item: <name> }` — decrements item quantity by 1 (minimum 0)
+
+Circle-to-circle unlock/lock/show/hide actions are also authored in the "When visited" section of the editor but are stored as `visited` conditions on the target circle, not in `inventoryActions`.
 
 ### Exit actions (when exited)
-`exitActions` on circles: optional array of actions that fire when the player **physically exits** the circle (not on priority demotion). Each action targets another circle by name:
+`exitActions` on circles: optional array of actions that fire when the player **physically exits** the circle (not on priority demotion):
 
 | Type | Effect |
 |---|---|
@@ -90,15 +92,27 @@ Requires `playToEnd: true` to be practically useful. The editor greys out `lockO
 | `unlock` | Unlocks the target circle (sets state → passive, clears lockedByEnd) |
 | `show` | Adds the target circle to the map (sets onMap → true) |
 | `hide` | Removes the target circle from the map (sets onMap → false) |
+| `addItem` | Increments the named item's quantity by 1 |
+| `removeItem` | Decrements the named item's quantity by 1 (minimum 0) |
 
 **Timing with `playToEnd`:** If `playToEnd` is true and audio is still playing when the player exits, exit actions are deferred — `rt.pendingExitActions` is set to `true` and the actions fire in the `onended` callback alongside `lockOnEnd`, once the audio finishes naturally.
 
 **Timing with `lockOnEnd`:** When the player stays inside through the full audio and `lockOnEnd` fires, exit actions also fire at that moment (natural completion = the effective exit).
 
-`fireExitActions(rt)` is the shared function that handles all four action types and resets `rt.pendingExitActions`.
+`fireExitActions(rt)` is the shared function that handles all six action types and resets `rt.pendingExitActions`.
 
 ### Immediate activation on unlock
 If a player is already standing inside a circle when it unlocks, it activates immediately — no need to exit and re-enter. `checkProximity` re-runs recursively on unlock.
+
+### playToEnd lock release
+When the `playToEndLock` releases (audio ends naturally in either the stayed-inside or walked-out path), `onPlayToEndLockReleased()` runs:
+1. Scans all `circleRuntime` entries for circles that are `active + inRange + activeGain === null` — circles that were promoted while the lock was held but whose whispers were blocked. Calls `startWhisperPlayback` on each immediately.
+2. Calls `checkProximity` with `lastKnownLatLng` to handle any passive circles the player is currently inside.
+
+### Start inside a circle
+After `initAudio()` resolves (Tap to Start), the `.then()` handler scans all `circleRuntime` entries for `active + inRange + activeGain === null`. This handles circles that became active during GPS/audio initialisation (when the GPS fix arrived before buffers were loaded) — their whispers play immediately without requiring the player to exit and re-enter.
+
+Note: `decodeAudioData` uses the explicit callback form wrapped in `new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej))` to avoid a Safari timing issue where the promise-based API can resolve before the buffer is actually ready.
 
 ### iPhone reliability
 - **Screen Wake Lock**: requested after Tap to Start, reacquired automatically on return from background
@@ -121,6 +135,15 @@ middle — radius 40 m, priority 20, repeat 1, playToEnd, lockOnEnd
 inner  — radius 15 m, priority 30, startsLocked
          conditions: [{ type: 'visited', circle: 'middle', minTimes: 1 }]
 ```
+
+### 2copiesKey (items as OR workaround)
+The condition system is AND-only — a circle unlocks only when ALL conditions are true. To unlock a circle when the player has visited either circle A or circle B, use an item as a flag: both A and B have `addItem: key` in their When visited actions; the target circle has `hasItem: key` as its unlock condition. First visit to either A or B drops the key and unlocks the target.
+
+### Mines! (item quantity as lives)
+Give the player a `hearts` item starting at quantity 3. "Mine" circles have `removeItem: hearts` as a When visited action and a `lockOnEnd` whisper ("Ouch!"). A "dead" circle has `itemQuantity: hearts, max: 0` as its unlock condition and plays a game-over whisper. A "you win" circle unlocks after visiting all safe targets.
+
+### InvisibleFrogs (item collection as win counter)
+Scatter hidden circles across the map, each visible only via `visibleConditions`. Each circle adds a `frog` item on visit and locks itself (`lockOnEnd`). A "win" circle has `itemQuantity: frog, min: N` as its unlock condition and plays a completion whisper when the player has collected all N frogs.
 
 ---
 
@@ -151,18 +174,37 @@ All properties are live-editable and autosaved:
 | Delete | button | — | Removes circle |
 
 ### Conditions
-Four condition sections, each with an **Add condition** button opening a 3-step picker:
+Four condition sections, each with an **Add condition** button opening a multi-step picker:
 
 - **Becomes unlocked if** — `conditions` array (ALL must be true)
 - **Becomes locked if** — `lockConditions` array (ANY triggers re-lock)
 - **Becomes visible if** — `visibleConditions` array (ALL must be true)
 - **Becomes hidden if** — `hideConditions` array (ALL must be true)
 
+Condition types available in the picker: another circle's state (active/passive/locked), another circle's visited count, another circle's visibility, player has item (`hasItem`), item quantity (`itemQuantity` with ≥ and/or ≤ thresholds).
+
 ### When visited actions
-`inventoryActions` — actions on player entry. Stored as outgoing actions on the source circle but represented internally as `visited` conditions on target circles. Each shows as e.g. "Unlock: circle-b".
+Actions that fire on passive → active (player entry). Two categories in the picker:
+
+- **Circle actions** (Lock / Unlock / Show on map / Hide from map) — stored as `visited` conditions on the target circle
+- **Item actions** (Add item / Remove item) — stored in `inventoryActions` on the source circle
+
+Displayed as e.g. "Unlock: circle-b" or "Add item: key".
 
 ### When exited actions
-`exitActions` — actions on physical player exit. Stored directly on the source circle's `exitActions` array. 2-step picker: choose action type (Lock / Unlock / Show / Hide) → choose target circle. Displayed as e.g. "On exit lock: circle-b".
+`exitActions` — actions on physical player exit. 2-step picker: choose action type → choose target circle or item. Six types: Lock / Unlock / Show / Hide (circle targets) and Add item / Remove item (item targets). Displayed as e.g. "On exit lock: circle-b" or "On exit add item: frog".
+
+### Items editor (🎒)
+Tap the backpack button in the editor header to open the items sheet. Items are the named quantities that circles can add/remove and conditions can test.
+
+Each item has:
+- **Icon** — any single emoji or character shown in the inventory row
+- **Name** — unique identifier used in actions and conditions
+- **Starting quantity** — quantity at game start (0 = not present)
+
+Tap an item row to expand it for inline editing (icon input, name input, quantity stepper). Tap **Done** to collapse. Tap the trash icon to delete. Tap **+ Add item** to create a new item (opens immediately in edit mode).
+
+Changes autosave. Items are included in the exported haunt JSON and load correctly in play mode and on import.
 
 ### Haunt metadata
 `id`, `title`, `author`, `version`, `created`, `modified`. `id` and `created` are preserved on import. `version` is incremented on export.
@@ -177,7 +219,7 @@ Generates a compressed play URL using LZString. Modal shows the URL (tap to copy
 Accepts a haunt URL or raw JSON. Rebuilds map, preserves `id`/`created`, autosaves.
 
 ### Clear draft (🗑)
-Resets to blank canvas — new `id`, empty circles, "New Haunt" title.
+Resets to blank canvas — new `id`, empty circles and items, "New Haunt" title.
 
 ---
 
@@ -193,7 +235,7 @@ Haunts are serialised as JSON and LZString-compressed into the `?haunt=` URL par
     "author":   "",
     "version":  3,
     "created":  "2026-04-01T10:00:00.000Z",
-    "modified": "2026-04-25T14:30:00.000Z"
+    "modified": "2026-05-05T14:30:00.000Z"
   },
   "circles": [
     {
@@ -217,7 +259,15 @@ Haunts are serialised as JSON and LZString-compressed into the `?haunt=` URL par
       "exitActions":       []
     }
   ],
-  "items": []
+  "items": [
+    {
+      "name":         "key",
+      "icon":         "🗝️",
+      "quantity":     0,
+      "startPresent": false,
+      "audio":        ""
+    }
+  ]
 }
 ```
 
@@ -229,10 +279,11 @@ Runtime-only fields (`lockedByEnd`, `pendingExitActions`) are never serialised.
 
 When a `?haunt=` URL parameter is present:
 1. LZString-decompress and parse the JSON
-2. Load circles into `CIRCLE_DEFS`
-3. Fetch all whisper audio files
-4. Show a slim dark-green title bar with the haunt title
-5. Run the standard GPS/proximity engine
+2. Load circles into `CIRCLE_DEFS` and items into `PLAYER_ITEMS`
+3. Initialise `playerInventory` from item `startPresent` / `quantity` values
+4. Fetch all whisper audio files
+5. Show a slim dark-green title bar with the haunt title
+6. Run the standard GPS/proximity engine
 
 ---
 
@@ -240,7 +291,7 @@ When a `?haunt=` URL parameter is present:
 
 ```
 ghost-circles/
-  index.html          — the entire app (engine + editor, ~3300 lines)
+  index.html          — the entire app (engine + editor, ~3500 lines)
   manifest.json       — PWA manifest (name, icons, display mode)
   sw.js               — service worker (caching, auto-update on deploy)
   _headers            — Netlify headers (no-cache for sw.js + index.html, audio/mp4 MIME type)
@@ -265,6 +316,7 @@ ghost-circles/
 | **Passive** | Unlocked circle the player is outside — red |
 | **Active** | Circle the player is inside and which holds highest priority — green |
 | **Visited** | Number of times a circle has transitioned from passive to active |
+| **Item** | A named quantity in the player's inventory; used in actions and conditions |
 | **lockedByEnd** | Runtime flag: circle was locked by lockOnEnd or an exit-action lock; suppresses auto-unlock |
 | **pendingExitActions** | Runtime flag: player physically exited a playToEnd circle; exitActions deferred to audio end |
 
@@ -273,10 +325,11 @@ ghost-circles/
 ## Code Conventions
 
 - `CIRCLE_DEFS` — array of circle definition objects (the haunt data)
-- `PLAYER_ITEMS` — array of item definitions (name, icon, quantity, startPresent, audio)
+- `PLAYER_ITEMS` — array of item definitions `{ name, icon, quantity, startPresent, audio }`
 - `playerInventory` — plain object mapping item name → current quantity
 - `circleRuntime` — object keyed by name: `{ def, leafletCircle, state, inRange, visited, onMap, activeGain, activeSource, playsRemaining, lockedByEnd, pendingExitActions }`
 - `playToEndLock` — module-level variable; holds the `rt` of any currently-playing playToEnd whisper, or `null`
+- `lastKnownLatLng` — module-level `{ lat, lng }` updated on every GPS fix; used by `onPlayToEndLockReleased` and the post-initAudio scan
 - `evaluateCondition(cond)` — evaluates a single condition object; supports all types
 - `evaluateConditions(def)` — returns true if ALL unlock conditions are satisfied
 - `evaluateLockConditions(def)` — returns true if ANY lock condition is met
@@ -284,14 +337,15 @@ ghost-circles/
 - `checkUnlocks(userLatLng)` — promotes locked circles whose conditions are met; skips `lockedByEnd` circles unconditionally; returns true if anything promoted
 - `checkProximity(lat, lng)` — five-pass algorithm: (1) update inRange → (2) find maxPriority → (3) resolve transitions + inventoryActions + checkUnlocks + exitActions → recurse if unlocks → (4) re-lock/re-unlock (skips lockedByEnd) → (5) update dynamic map visibility
 - `startWhisperPlayback(rt)` — checks playToEndLock, claims it if playToEnd, starts audio per repeat setting
-- `playNextInSequence(rt, gain)` — chains sequential plays via `onended`; on natural completion fires lockOnEnd then `fireExitActions`
-- `stopWhisperPlayback(rt)` — if playToEnd: lets audio run to end, sets `pendingExitActions` flag on exit, fires `fireExitActions` in onended; otherwise fades over 1s and stops
-- `fireExitActions(rt)` — executes all `exitActions` on the circle's def; handles lock/unlock/show/hide on target circles; resets `rt.pendingExitActions`
-- `initAudio()` — creates AudioContext; pre-loads all whisper and item audio files; logs per-buffer success/failure with duration
+- `playNextInSequence(rt, gain)` — chains sequential plays via `onended`; on natural completion fires lockOnEnd, `fireExitActions`, then `onPlayToEndLockReleased`
+- `stopWhisperPlayback(rt)` — if playToEnd: lets audio run to end, sets `pendingExitActions` flag on exit, fires `fireExitActions` then `onPlayToEndLockReleased` in onended; otherwise fades over 1s and stops
+- `fireExitActions(rt)` — executes all `exitActions` on the circle's def; handles lock/unlock/show/hide/addItem/removeItem; resets `rt.pendingExitActions`
+- `onPlayToEndLockReleased()` — scans circleRuntime for active+inRange+silent circles and starts their whispers; then calls checkProximity for any remaining passive circles
+- `initAudio()` — creates AudioContext; pre-loads all whisper and item audio files using callback-form `decodeAudioData` wrapped in a Promise; logs per-buffer success/failure with duration
 - `startTracking()` — starts (or restarts) the GPS watcher
 - `renderInventory()` — re-renders the inventory row
 - `playItemAudio(item)` — plays an item's description audio once
-- `saveDraft()` / `saveDraftDebounced()` — writes haunt state to localStorage
+- `saveDraft()` / `saveDraftDebounced()` — writes haunt state (circles + items) to localStorage
 - `showFlash(msg, durationMs)` — generic flash message helper
 - `generateId()` — returns a random hex string used as haunt `id`
 - `EDITOR_MODE` — true when `?editor=true` is in the URL
@@ -304,7 +358,7 @@ ghost-circles/
 - All whispers must be **`.m4a`** format (required for Web Audio API on iOS Safari)
 - The `whisper` field stores the **bare filename without extension** (e.g. `rain`, not `rain.m4a`)
 - The engine always fetches from `audio/<name>.m4a` at runtime
-- `whisperBuffers` is keyed by bare name (e.g. `whisperBuffers['rain']`)
+- `whisperBuffers` is keyed by bare name for whispers and full path for item audio (e.g. `whisperBuffers['rain']`)
 - Audio files must be **uploaded manually** to the `audio/` folder in the GitHub repo
 - The export modal audio checklist (HEAD requests) shows which files are present/missing before sharing
 
@@ -324,11 +378,12 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 - Buffer loads: `buf ok: <name> (<s>)` / `buf ERR: <name> — <reason>`
 - Whisper play: `play: <name> ×<N> dur=<s> (ctx:<state>)`
 - Play blocked: `play BLOCKED: <name> — playToEnd lock held by <name>`
+- Play skipped: `play SKIP: <name> — no buffer (keys: <list>)`
 - Lock claimed/released: `playToEnd lock claimed/released: <name>`
 - Lock on end: `lockedByEnd: <name>`
 - Unlock skipped: `unlock SKIP: <name> (lockedByEnd)`
 - Pass 4 skip: `pass4 SKIP: <name> (lockedByEnd)`
-- Exit actions: `exit action: lock/unlock/show/hide → <target>`
+- Exit actions: `exit action: lock/unlock/show/hide/addItem/removeItem → <target>`
 
 ---
 
@@ -339,13 +394,14 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 - **GPS dying after screen off**: watcher unconditionally restarted on `visibilitychange`
 - **GPS blocked by audio errors**: `startTracking()` and `initAudio()` run in parallel
 - **MIME type for .m4a**: `Content-Type: audio/mp4` set via `_headers`
+- **`decodeAudioData` resolving early**: Safari's promise-based `decodeAudioData` can resolve before the buffer is ready; fixed by using `new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej))` (explicit callback form)
+- **Start-inside-circle whisper not playing**: GPS fix can arrive before `initAudio` resolves; fixed by scanning for active+inRange+silent circles in the `initAudio().then()` handler
 
 ---
 
 ## Known Limitations
 
 - **No file upload in editor**: audio `.m4a` files must be added to the `audio/` folder in the GitHub repo manually. The export checklist will flag missing files.
-- **No items editor**: `PLAYER_ITEMS` and item-related conditions/actions exist in the engine but there is no UI to author them — requires direct code editing.
 - **No circle list panel**: circles can only be selected by tapping them on the map. No list view.
 - **No time/date conditions**: the condition system has no awareness of real-world time or date.
 - **lockedByEnd is session-only**: the flag is not saved in the haunt JSON and resets on page reload. A circle locked by `lockOnEnd` or an exit-action `lock` will return to passive on the player's next session unless `startsLocked` is also set.
@@ -355,7 +411,6 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 
 ## Next Steps
 
-- **Items editor**: UI to define items (name, icon, audio) and wire them to circle actions and conditions
 - **Time/date conditions**: `{ type: "after", time: "18:00" }`, `{ type: "before", time: "21:00" }`, `{ type: "onDate", date: "2026-06-21" }`
 - **Circle list panel**: scrollable list of all circles with tap-to-select and rename
 - **Player progress persistence**: save visited counts, inventory, and circle states to `localStorage` keyed by haunt `id`, so players can resume a session across reloads

@@ -1047,7 +1047,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.44</div>
+  <div id="version">v3.45</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1377,6 +1377,25 @@
       if (cond.type === 'isLocked')  return circleRuntime[cond.circle]?.state === 'locked';
       if (cond.type === 'isVisible') return circleRuntime[cond.circle]?.onMap === true;
       if (cond.type === 'isHidden')  return circleRuntime[cond.circle]?.onMap !== true;
+      if (cond.type === 'timeOfDay') {
+        const now  = new Date();
+        const cur  = now.getHours() * 60 + now.getMinutes();
+        const [fh, fm] = cond.from.split(':').map(Number);
+        const [th, tm] = cond.to.split(':').map(Number);
+        const from = fh * 60 + fm;
+        const to   = th * 60 + tm;
+        // Support ranges that cross midnight (e.g. 20:00–06:00)
+        return from <= to ? (cur >= from && cur <= to) : (cur >= from || cur <= to);
+      }
+      if (cond.type === 'dayOfWeek') {
+        const names = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+        return cond.days.includes(names[new Date().getDay()]);
+      }
+      if (cond.type === 'date') {
+        const now = new Date();
+        const cur = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+        return cur >= cond.from && cur <= cond.to;
+      }
       return false;
     }
 
@@ -2061,6 +2080,16 @@
         if (cond.type === 'isLocked')  return `${cond.circle} is locked`;
         if (cond.type === 'isVisible') return `${cond.circle} is visible on map`;
         if (cond.type === 'isHidden')  return `${cond.circle} is hidden from map`;
+        if (cond.type === 'timeOfDay') return `🕐 Active between ${cond.from} and ${cond.to}`;
+        if (cond.type === 'dayOfWeek') {
+          const names = cond.days.map(d => d.charAt(0).toUpperCase() + d.slice(1));
+          return `🕐 Active on ${names.join(', ')}`;
+        }
+        if (cond.type === 'date') {
+          return cond.from === cond.to
+            ? `🕐 Active on ${cond.from}`
+            : `🕐 Active from ${cond.from} to ${cond.to}`;
+        }
         return JSON.stringify(cond);
       };
 
@@ -2623,6 +2652,124 @@
           renderPickerItemStep2();
           return;
         }
+
+        // Time-of-day condition: from/to time inputs
+        if (_pickerCondCheckType === 'timeOfDay') {
+          document.getElementById('action-picker-title').textContent = 'Time of day';
+          const body = document.getElementById('action-picker-body');
+          body.innerHTML = '';
+          const note = document.createElement('p');
+          note.style.cssText = 'font-size:12px;color:rgba(255,255,255,0.45);margin:0 0 12px';
+          note.textContent = 'Ranges can cross midnight (e.g. 20:00 to 06:00)';
+          body.appendChild(note);
+          [{ label: 'From', id: 'tc-from', def: '20:00' }, { label: 'To', id: 'tc-to', def: '06:00' }].forEach(({ label, id, def: dflt }) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0 10px';
+            const lbl = document.createElement('span');
+            lbl.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.5);white-space:nowrap;min-width:40px';
+            lbl.textContent = label;
+            const input = document.createElement('input');
+            input.type = 'time'; input.id = id; input.value = dflt;
+            input.className = 'prop-input'; input.style.cssText = 'flex:1;margin:0';
+            row.appendChild(lbl); row.appendChild(input); body.appendChild(row);
+          });
+          const addBtn = document.createElement('button');
+          addBtn.className = 'picker-option-btn';
+          addBtn.textContent = 'Add condition';
+          addBtn.addEventListener('click', () => {
+            const from = document.getElementById('tc-from').value;
+            const to   = document.getElementById('tc-to').value;
+            if (!from || !to) return;
+            const def = circleRuntime[selectedCircleName]?.def;
+            if (def) {
+              if (!def[_pickerCondArrayKey]) def[_pickerCondArrayKey] = [];
+              def[_pickerCondArrayKey].push({ type: 'timeOfDay', from, to });
+            }
+            closePicker(); renderConditionArray(selectedCircleName, _pickerCondArrayKey);
+            renderConditions(selectedCircleName); saveDraft();
+          });
+          body.appendChild(addBtn);
+          return;
+        }
+
+        // Day-of-week condition: seven checkboxes
+        if (_pickerCondCheckType === 'dayOfWeek') {
+          document.getElementById('action-picker-title').textContent = 'Day of week';
+          const body = document.getElementById('action-picker-body');
+          body.innerHTML = '';
+          const dayNames = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+          const checkboxes = [];
+          dayNames.forEach(day => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:5px 0';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.id = `dow-${day.toLowerCase()}`;
+            cb.style.cssText = 'width:18px;height:18px;cursor:pointer;flex-shrink:0';
+            checkboxes.push(cb);
+            const lbl = document.createElement('label');
+            lbl.htmlFor = cb.id;
+            lbl.style.cssText = 'font-size:14px;color:#fff;cursor:pointer';
+            lbl.textContent = day;
+            row.appendChild(cb); row.appendChild(lbl); body.appendChild(row);
+          });
+          const addBtn = document.createElement('button');
+          addBtn.className = 'picker-option-btn'; addBtn.style.marginTop = '8px';
+          addBtn.textContent = 'Add condition';
+          addBtn.addEventListener('click', () => {
+            const selected = dayNames.filter((_, i) => checkboxes[i].checked).map(d => d.toLowerCase());
+            if (selected.length === 0) return;
+            const def = circleRuntime[selectedCircleName]?.def;
+            if (def) {
+              if (!def[_pickerCondArrayKey]) def[_pickerCondArrayKey] = [];
+              def[_pickerCondArrayKey].push({ type: 'dayOfWeek', days: selected });
+            }
+            closePicker(); renderConditionArray(selectedCircleName, _pickerCondArrayKey);
+            renderConditions(selectedCircleName); saveDraft();
+          });
+          body.appendChild(addBtn);
+          return;
+        }
+
+        // Date range condition: from/to date inputs
+        if (_pickerCondCheckType === 'date') {
+          document.getElementById('action-picker-title').textContent = 'Date range';
+          const body = document.getElementById('action-picker-body');
+          body.innerHTML = '';
+          const today = new Date().toISOString().slice(0, 10);
+          [{ label: 'From', id: 'dr-from' }, { label: 'To', id: 'dr-to' }].forEach(({ label, id }) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0 10px';
+            const lbl = document.createElement('span');
+            lbl.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.5);white-space:nowrap;min-width:40px';
+            lbl.textContent = label;
+            const input = document.createElement('input');
+            input.type = 'date'; input.id = id; input.value = today;
+            input.className = 'prop-input'; input.style.cssText = 'flex:1;margin:0';
+            row.appendChild(lbl); row.appendChild(input); body.appendChild(row);
+          });
+          const note = document.createElement('p');
+          note.style.cssText = 'font-size:12px;color:rgba(255,255,255,0.45);margin:0 0 12px';
+          note.textContent = 'Set From and To to the same date for a single day';
+          body.appendChild(note);
+          const addBtn = document.createElement('button');
+          addBtn.className = 'picker-option-btn';
+          addBtn.textContent = 'Add condition';
+          addBtn.addEventListener('click', () => {
+            const from = document.getElementById('dr-from').value;
+            const to   = document.getElementById('dr-to').value;
+            if (!from || !to) return;
+            const def = circleRuntime[selectedCircleName]?.def;
+            if (def) {
+              if (!def[_pickerCondArrayKey]) def[_pickerCondArrayKey] = [];
+              def[_pickerCondArrayKey].push({ type: 'date', from, to });
+            }
+            closePicker(); renderConditionArray(selectedCircleName, _pickerCondArrayKey);
+            renderConditions(selectedCircleName); saveDraft();
+          });
+          body.appendChild(addBtn);
+          return;
+        }
+
         // Circle-type conditions: show other circles
         document.getElementById('action-picker-title').textContent = 'Choose circle';
         const body = document.getElementById('action-picker-body');
@@ -2654,6 +2801,9 @@
         { key: 'visibility',   label: "Another circle's visibility" },
         { key: 'hasItem',      label: 'Player has item' },
         { key: 'itemQuantity', label: 'Item quantity' },
+        { key: 'timeOfDay',    label: '🕐 Time of day' },
+        { key: 'dayOfWeek',    label: '🕐 Day of week' },
+        { key: 'date',         label: '🕐 Specific date range' },
       ];
 
       const openConditionPicker = (arrayKey) => {

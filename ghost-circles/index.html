@@ -1047,7 +1047,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.45</div>
+  <div id="version">v3.46</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1826,6 +1826,13 @@
       );
     }, 2000);
 
+    // Re-evaluate conditions every 60 s so time-based conditions (timeOfDay, dayOfWeek,
+    // date) activate and deactivate without requiring player movement or a page reload.
+    setInterval(() => {
+      if (!lastKnownLatLng) return;
+      checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
+    }, 60000);
+
     function checkProximity(latitude, longitude) {
       const userLatLng = L.latLng(latitude, longitude);
 
@@ -2080,15 +2087,15 @@
         if (cond.type === 'isLocked')  return `${cond.circle} is locked`;
         if (cond.type === 'isVisible') return `${cond.circle} is visible on map`;
         if (cond.type === 'isHidden')  return `${cond.circle} is hidden from map`;
-        if (cond.type === 'timeOfDay') return `🕐 Active between ${cond.from} and ${cond.to}`;
+        if (cond.type === 'timeOfDay') return `🕐 Between ${cond.from} and ${cond.to}`;
         if (cond.type === 'dayOfWeek') {
           const names = cond.days.map(d => d.charAt(0).toUpperCase() + d.slice(1));
-          return `🕐 Active on ${names.join(', ')}`;
+          return `🕐 On ${names.join(', ')}`;
         }
         if (cond.type === 'date') {
           return cond.from === cond.to
-            ? `🕐 Active on ${cond.from}`
-            : `🕐 Active from ${cond.from} to ${cond.to}`;
+            ? `🕐 On ${cond.from}`
+            : `🕐 From ${cond.from} to ${cond.to}`;
         }
         return JSON.stringify(cond);
       };
@@ -2106,8 +2113,29 @@
         (def.hideConditions   || []).forEach(c => rows.push(['Hidden when',  describeCondition(c)]));
 
         el.innerHTML = '';
+
+        // Conflict detection: warn if the same condition appears in both conditions
+        // (unlock) and lockConditions (re-lock) — the circle can never leave locked state.
+        const condKey = c => {
+          if (c.type === 'timeOfDay')    return `timeOfDay:${c.from}:${c.to}`;
+          if (c.type === 'dayOfWeek')    return `dayOfWeek:${[...c.days].sort().join(',')}`;
+          if (c.type === 'date')         return `date:${c.from}:${c.to}`;
+          if (c.type === 'visited')      return `visited:${c.circle}:${c.minTimes}`;
+          if (c.type === 'hasItem')      return `hasItem:${c.item}`;
+          if (c.type === 'itemQuantity') return `itemQuantity:${c.item}:${c.min ?? ''}:${c.max ?? ''}`;
+          return `${c.type}:${c.circle ?? ''}`;
+        };
+        const unlockKeys = new Set((def.conditions || []).map(condKey));
+        const hasConflict = (def.lockConditions || []).some(c => unlockKeys.has(condKey(c)));
+        if (hasConflict) {
+          const w = document.createElement('p');
+          w.style.cssText = 'color:#ef5350;font-size:12px;margin:0 0 8px;font-weight:500';
+          w.textContent = '⚠️ Conflicting conditions — same condition in unlock and lock';
+          el.appendChild(w);
+        }
+
         if (rows.length === 0) {
-          el.innerHTML = '<p class="panel-empty">No conditions — always available</p>';
+          el.innerHTML += '<p class="panel-empty">No conditions — always available</p>';
         } else {
           rows.forEach(([prefix, desc]) => {
             const p = document.createElement('p');

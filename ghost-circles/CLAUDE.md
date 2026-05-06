@@ -4,9 +4,9 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.44) — Items Release
+## Current State (v3.47) — Time Conditions Release
 
-The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system. Circles can trigger effects on other circles and on items both when entered (`inventoryActions`) and when physically exited (`exitActions`). Items can be defined, edited, and wired to actions and conditions entirely within the browser editor. v3.44 is the stable authoring platform on which experiences are built.
+The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system and time/date-aware conditions. Circles can unlock, lock, show, or hide based on the device's local time of day, day of week, or calendar date — in addition to all existing player-action conditions. v3.47 is the stable authoring platform on which experiences are built.
 
 ---
 
@@ -41,8 +41,11 @@ All types work in `conditions`, `lockConditions`, `visibleConditions`, and `hide
 | `isHidden` | `{ type: "isHidden", circle: <name> }` | Named circle is currently off the map |
 | `itemQuantity` | `{ type: "itemQuantity", item: <name>, min: <n> }` | Item quantity ≥ n |
 | `itemQuantity` | `{ type: "itemQuantity", item: <name>, max: <n> }` | Item quantity ≤ n |
+| `timeOfDay` | `{ type: "timeOfDay", from: "20:00", to: "06:00" }` | Current local time is within the range (cross-midnight supported) |
+| `dayOfWeek` | `{ type: "dayOfWeek", days: ["saturday", "sunday"] }` | Current local day is in the array (lowercase English names) |
+| `date` | `{ type: "date", from: "2026-10-31", to: "2026-11-01" }` | Current local date falls within the range (YYYY-MM-DD; same date for single day) |
 
-`min` and `max` can be combined in one `itemQuantity` condition.
+`min` and `max` can be combined in one `itemQuantity` condition. All three time/date types use the device's local time via JavaScript's `Date` object.
 
 ### Priority system
 When the player is inside multiple unlocked circles simultaneously, only the circle(s) with the highest `priority` value become active. Lower-priority circles remain passive — no whisper, no vibration. On a tie, all tied circles activate simultaneously. Priority demotion (a higher-priority circle entering range) does not trigger an exit vibration and does not fire exitActions.
@@ -110,9 +113,18 @@ When the `playToEndLock` releases (audio ends naturally in either the stayed-ins
 2. Calls `checkProximity` with `lastKnownLatLng` to handle any passive circles the player is currently inside.
 
 ### Start inside a circle
-After `initAudio()` resolves (Tap to Start), the `.then()` handler scans all `circleRuntime` entries for `active + inRange + activeGain === null`. This handles circles that became active during GPS/audio initialisation (when the GPS fix arrived before buffers were loaded) — their whispers play immediately without requiring the player to exit and re-enter.
+After `initAudio()` resolves (Tap to Start), the `.then()` handler:
+1. Scans all `circleRuntime` entries for `active + inRange + activeGain === null` and calls `startWhisperPlayback` on each — handles circles that became active during GPS/audio initialisation before buffers were loaded.
+2. Calls `checkUnlocks(L.latLng(...))` then `checkProximity` — evaluates time-based conditions immediately so a circle that should be active right now activates without waiting up to 60 seconds for the first timer tick.
 
 Note: `decodeAudioData` uses the explicit callback form wrapped in `new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej))` to avoid a Safari timing issue where the promise-based API can resolve before the buffer is actually ready.
+
+### Time condition re-evaluation
+A 60-second `setInterval` keeps time-based conditions live without requiring player movement. On each tick it:
+1. Calls `checkUnlocks(L.latLng(...))` directly — re-evaluates every locked circle (except `lockedByEnd`) against current conditions. This is necessary because `checkProximity`'s Pass 3 skips locked circles entirely; `checkUnlocks` is only called inside Pass 3 on passive→active transitions, so it would never run when the player is stationary.
+2. Calls `checkProximity` — handles Pass 4 re-locking, activates any newly-passive circles the player is standing inside, and updates visibility (Pass 5).
+
+Logs `time tick: checking N locked circles` each tick (visible in debug mode).
 
 ### iPhone reliability
 - **Screen Wake Lock**: requested after Tap to Start, reacquired automatically on return from background
@@ -181,7 +193,11 @@ Four condition sections, each with an **Add condition** button opening a multi-s
 - **Becomes visible if** — `visibleConditions` array (ALL must be true)
 - **Becomes hidden if** — `hideConditions` array (ALL must be true)
 
-Condition types available in the picker: another circle's state (active/passive/locked), another circle's visited count, another circle's visibility, player has item (`hasItem`), item quantity (`itemQuantity` with ≥ and/or ≤ thresholds).
+Condition types available in the picker: another circle's state (active/passive/locked), another circle's visited count, another circle's visibility, player has item (`hasItem`), item quantity (`itemQuantity` with ≥ and/or ≤ thresholds), time of day, day of week, specific date range.
+
+Time/date conditions show with a 🕐 prefix in the Active conditions display. The picker for **Time of day** shows two `HH:MM` inputs with a note that ranges can cross midnight. **Day of week** shows seven checkboxes (at least one must be checked). **Specific date range** shows two date pickers defaulting to today; set both to the same date for a single day.
+
+If a circle has the same condition in both its `conditions` (unlock) and `lockConditions` (re-lock) arrays, a red **⚠️ Conflicting conditions** warning appears at the top of the Active conditions panel.
 
 ### When visited actions
 Actions that fire on passive → active (player entry). Two categories in the picker:
@@ -329,7 +345,7 @@ ghost-circles/
 - `playerInventory` — plain object mapping item name → current quantity
 - `circleRuntime` — object keyed by name: `{ def, leafletCircle, state, inRange, visited, onMap, activeGain, activeSource, playsRemaining, lockedByEnd, pendingExitActions }`
 - `playToEndLock` — module-level variable; holds the `rt` of any currently-playing playToEnd whisper, or `null`
-- `lastKnownLatLng` — module-level `{ lat, lng }` updated on every GPS fix; used by `onPlayToEndLockReleased` and the post-initAudio scan
+- `lastKnownLatLng` — module-level `{ lat, lng }` updated on every GPS fix; used by `onPlayToEndLockReleased`, the post-initAudio scan, and the 60-second time-condition timer
 - `evaluateCondition(cond)` — evaluates a single condition object; supports all types
 - `evaluateConditions(def)` — returns true if ALL unlock conditions are satisfied
 - `evaluateLockConditions(def)` — returns true if ANY lock condition is met
@@ -384,6 +400,7 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 - Unlock skipped: `unlock SKIP: <name> (lockedByEnd)`
 - Pass 4 skip: `pass4 SKIP: <name> (lockedByEnd)`
 - Exit actions: `exit action: lock/unlock/show/hide/addItem/removeItem → <target>`
+- Time tick: `time tick: checking <N> locked circles`
 
 ---
 
@@ -403,15 +420,14 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 
 - **No file upload in editor**: audio `.m4a` files must be added to the `audio/` folder in the GitHub repo manually. The export checklist will flag missing files.
 - **No circle list panel**: circles can only be selected by tapping them on the map. No list view.
-- **No time/date conditions**: the condition system has no awareness of real-world time or date.
 - **lockedByEnd is session-only**: the flag is not saved in the haunt JSON and resets on page reload. A circle locked by `lockOnEnd` or an exit-action `lock` will return to passive on the player's next session unless `startsLocked` is also set.
 - **Play-state not persisted**: visited counts, inventory, and circle states reset on page reload.
+- **Time conditions granularity**: the re-evaluation timer fires every 60 seconds, so time-based conditions activate within one minute of the condition becoming true rather than instantly.
 
 ---
 
 ## Next Steps
 
-- **Time/date conditions**: `{ type: "after", time: "18:00" }`, `{ type: "before", time: "21:00" }`, `{ type: "onDate", date: "2026-06-21" }`
 - **Circle list panel**: scrollable list of all circles with tap-to-select and rename
 - **Player progress persistence**: save visited counts, inventory, and circle states to `localStorage` keyed by haunt `id`, so players can resume a session across reloads
 - **Server storage**: haunts stored server-side with short share codes instead of long compressed URLs

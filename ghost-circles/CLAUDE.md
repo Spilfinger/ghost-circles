@@ -4,9 +4,9 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.47) — Time Conditions Release
+## Current State (v3.49) — Time Conditions Release
 
-The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system and time/date-aware conditions. Circles can unlock, lock, show, or hide based on the device's local time of day, day of week, or calendar date — in addition to all existing player-action conditions. v3.47 is the stable authoring platform on which experiences are built.
+The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system and time/date-aware conditions. Circles can unlock, lock, show, or hide based on the device's local time of day, day of week, or calendar date — in addition to all existing player-action conditions. Time/date conditions now evaluate on the first GPS fix after page load — typically within 8 seconds. The 60-second interval continues to handle ongoing re-evaluation. v3.49 is the stable authoring platform on which experiences are built.
 
 ---
 
@@ -113,14 +113,16 @@ When the `playToEndLock` releases (audio ends naturally in either the stayed-ins
 2. Calls `checkProximity` with `lastKnownLatLng` to handle any passive circles the player is currently inside.
 
 ### Start inside a circle
-After `initAudio()` resolves (Tap to Start), the `.then()` handler:
-1. Scans all `circleRuntime` entries for `active + inRange + activeGain === null` and calls `startWhisperPlayback` on each — handles circles that became active during GPS/audio initialisation before buffers were loaded.
-2. Calls `checkUnlocks(L.latLng(...))` then `checkProximity` — evaluates time-based conditions immediately so a circle that should be active right now activates without waiting up to 60 seconds for the first timer tick.
+After `initAudio()` resolves (Tap to Start), the `.then()` handler scans all `circleRuntime` entries for `active + inRange + activeGain === null` and calls `startWhisperPlayback` on each — handles circles that became active during GPS/audio initialisation before buffers were loaded.
 
 Note: `decodeAudioData` uses the explicit callback form wrapped in `new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej))` to avoid a Safari timing issue where the promise-based API can resolve before the buffer is actually ready.
 
 ### Time condition re-evaluation
-A 60-second `setInterval` keeps time-based conditions live without requiring player movement. On each tick it:
+Time-based conditions (`timeOfDay`, `dayOfWeek`, `date`) are evaluated in two ways:
+
+**On first GPS fix** (`firstGpsFix` flag): `onPosition` calls `checkUnlocks(L.latLng(...))` before the normal `checkProximity` on the very first position fix after page load. This runs typically within 8 seconds of Tap to Start — long before the first 60-second tick.
+
+**Every 60 seconds** (`setInterval`): keeps time-based conditions live as time passes without requiring player movement. On each tick:
 1. Calls `checkUnlocks(L.latLng(...))` directly — re-evaluates every locked circle (except `lockedByEnd`) against current conditions. This is necessary because `checkProximity`'s Pass 3 skips locked circles entirely; `checkUnlocks` is only called inside Pass 3 on passive→active transitions, so it would never run when the player is stationary.
 2. Calls `checkProximity` — handles Pass 4 re-locking, activates any newly-passive circles the player is standing inside, and updates visibility (Pass 5).
 
@@ -346,6 +348,7 @@ ghost-circles/
 - `circleRuntime` — object keyed by name: `{ def, leafletCircle, state, inRange, visited, onMap, activeGain, activeSource, playsRemaining, lockedByEnd, pendingExitActions }`
 - `playToEndLock` — module-level variable; holds the `rt` of any currently-playing playToEnd whisper, or `null`
 - `lastKnownLatLng` — module-level `{ lat, lng }` updated on every GPS fix; used by `onPlayToEndLockReleased`, the post-initAudio scan, and the 60-second time-condition timer
+- `firstGpsFix` — boolean, true until the first `onPosition` call; triggers an immediate `checkUnlocks` pass for time-based conditions on first fix
 - `evaluateCondition(cond)` — evaluates a single condition object; supports all types
 - `evaluateConditions(def)` — returns true if ALL unlock conditions are satisfied
 - `evaluateLockConditions(def)` — returns true if ANY lock condition is met
@@ -422,7 +425,7 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 - **No circle list panel**: circles can only be selected by tapping them on the map. No list view.
 - **lockedByEnd is session-only**: the flag is not saved in the haunt JSON and resets on page reload. A circle locked by `lockOnEnd` or an exit-action `lock` will return to passive on the player's next session unless `startsLocked` is also set.
 - **Play-state not persisted**: visited counts, inventory, and circle states reset on page reload.
-- **Time conditions granularity**: the re-evaluation timer fires every 60 seconds, so time-based conditions activate within one minute of the condition becoming true rather than instantly.
+
 
 ---
 

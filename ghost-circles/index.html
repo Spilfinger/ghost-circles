@@ -1828,8 +1828,14 @@
 
     // Re-evaluate conditions every 60 s so time-based conditions (timeOfDay, dayOfWeek,
     // date) activate and deactivate without requiring player movement or a page reload.
+    // checkProximity alone is not enough — its Pass 3 skips locked circles entirely and
+    // only calls checkUnlocks on passive→active transitions. We must call checkUnlocks
+    // directly so every locked circle is re-evaluated against current conditions.
     setInterval(() => {
       if (!lastKnownLatLng) return;
+      const lockedCount = CIRCLE_DEFS.filter(d => circleRuntime[d.name]?.state === 'locked' && !circleRuntime[d.name]?.lockedByEnd).length;
+      debugLog(`time tick: checking ${lockedCount} locked circles`);
+      checkUnlocks(L.latLng(lastKnownLatLng.lat, lastKnownLatLng.lng));
       checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
     }, 60000);
 

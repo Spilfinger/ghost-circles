@@ -1047,7 +1047,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.47</div>
+  <div id="version">v3.49</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1803,12 +1803,6 @@
             startWhisperPlayback(crt);
           }
         });
-        // Run the time-tick logic immediately so time-based conditions are evaluated at
-        // startup rather than waiting up to 60 s for the first interval tick.
-        if (lastKnownLatLng) {
-          checkUnlocks(L.latLng(lastKnownLatLng.lat, lastKnownLatLng.lng));
-          checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
-        }
       }).catch(() => {});
       // Request wake lock to keep screen on during play
       requestWakeLock();
@@ -1819,6 +1813,7 @@
     let watchId       = null;
     let gpsRetryTimer = null;
     let lastFixTime   = null;
+    let firstGpsFix   = true; // cleared after the first position fix
 
     const GPS_STALE_MS = 10000; // grey out the dot after 10 s without a fix
 
@@ -1967,6 +1962,14 @@
       const { latitude, longitude } = pos.coords;
       lastFixTime = Date.now();
       lastKnownLatLng = { lat: latitude, lng: longitude };
+
+      // On the very first GPS fix, run a time-condition pass before the normal proximity
+      // check. This ensures timeOfDay/dayOfWeek/date conditions are evaluated immediately
+      // rather than waiting up to 60 s for the first interval tick.
+      if (firstGpsFix) {
+        firstGpsFix = false;
+        checkUnlocks(L.latLng(latitude, longitude));
+      }
 
       if (!playerMarker) {
         // First fix — create marker and pan to it

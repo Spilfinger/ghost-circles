@@ -136,6 +136,19 @@
       pointer-events: none;
     }
     body.haunt #haunt-title-bar   { display: flex; }
+    #haunt-reset-btn {
+      position: absolute;
+      right: max(16px, env(safe-area-inset-right));
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 6px;
+      pointer-events: auto;
+      -webkit-tap-highlight-color: transparent;
+    }
     body.haunt .leaflet-top.leaflet-left { top: calc(60px + env(safe-area-inset-top)); }
     body.haunt #version           { top: calc(60px + env(safe-area-inset-top)); }
     body.haunt #inventory         { top: calc(60px + env(safe-area-inset-top) + 36px); }
@@ -1046,8 +1059,8 @@
 
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
-  <div id="haunt-title-bar"><span id="haunt-title-text"></span></div>
-  <div id="version">v3.49</div>
+  <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">🔄</button></div>
+  <div id="version">v3.50</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1272,6 +1285,9 @@
     //   { type: "itemQuantity", item: <name>, max: <n> }         — quantity ≤ n
     const CIRCLE_DEFS = [];
 
+    // Save key for the current haunt's play-state (null outside play mode or if no haunt id)
+    let _hauntSaveKey = null;
+
     // --- Haunt URL loading (play mode only) ---
     // If a ?haunt= parameter is present, decode and decompress the haunt JSON and
     // use its circles array instead of the hardcoded CIRCLE_DEFS.
@@ -1296,6 +1312,15 @@
             document.title = _haunt.metadata.title;
             document.getElementById('haunt-title-text').textContent = _haunt.metadata.title;
             document.body.classList.add('haunt');
+          }
+          if (_haunt.metadata?.id) {
+            _hauntSaveKey = `ghost-circles-save-${_haunt.metadata.id}`;
+            document.getElementById('haunt-reset-btn').addEventListener('click', () => {
+              if (window.confirm('Start over? All progress will be lost.')) {
+                localStorage.removeItem(_hauntSaveKey);
+                window.location.reload();
+              }
+            });
           }
         } catch(e) { /* malformed param — fall through to hardcoded CIRCLE_DEFS */ }
       }
@@ -1360,6 +1385,31 @@
         lockedByEnd: false,
       };
     });
+
+    // Restore saved play state (play mode only). Applied after circleRuntime is built
+    // so all runtime objects exist. Active is restored as passive — the engine will
+    // re-activate on the first GPS tick if the player is still inside, which avoids
+    // spurious exit-action firing if they've since moved away.
+    if (_hauntSaveKey) {
+      try {
+        const _savedJson = localStorage.getItem(_hauntSaveKey);
+        if (_savedJson) {
+          const _save = JSON.parse(_savedJson);
+          CIRCLE_DEFS.forEach(def => {
+            const rt = circleRuntime[def.name];
+            if (!rt) return;
+            if (_save.visited?.[def.name] !== undefined) rt.visited = _save.visited[def.name];
+            if (_save.lockedByEnd?.[def.name])           rt.lockedByEnd = true;
+            if (_save.states?.[def.name]) {
+              rt.state = _save.states[def.name] === 'locked' ? 'locked' : 'passive';
+              const color = rt.state === 'locked' ? COLOR_LOCKED : COLOR_PASSIVE;
+              rt.leafletCircle.setStyle({ color, fillColor: color });
+            }
+          });
+          if (_save.inventory) Object.assign(playerInventory, _save.inventory);
+        }
+      } catch(e) { /* malformed save — ignore and start fresh */ }
+    }
 
     // Evaluate a single condition object. Used by both evaluateConditions and
     // evaluateLockConditions so all condition types are defined in one place.
@@ -1718,6 +1768,27 @@
           debugLog(`exit action: removeItem → ${action.item}`);
         }
       });
+      savePlayState();
+    }
+
+    // Persist current play state to localStorage keyed by haunt id.
+    // No-op outside play mode (when _hauntSaveKey is null).
+    function savePlayState() {
+      if (!_hauntSaveKey) return;
+      const save = {
+        visited:     {},
+        inventory:   { ...playerInventory },
+        states:      {},
+        lockedByEnd: {},
+      };
+      CIRCLE_DEFS.forEach(def => {
+        const rt = circleRuntime[def.name];
+        if (!rt) return;
+        save.visited[def.name]  = rt.visited;
+        save.states[def.name]   = rt.state;
+        if (rt.lockedByEnd) save.lockedByEnd[def.name] = true;
+      });
+      localStorage.setItem(_hauntSaveKey, JSON.stringify(save));
     }
 
     // --- Player inventory ---
@@ -1956,6 +2027,8 @@
           rt.onMap = false;
         }
       });
+
+      savePlayState();
     }
 
     function onPosition(pos) {

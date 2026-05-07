@@ -141,8 +141,8 @@
       right: max(16px, env(safe-area-inset-right));
       background: none;
       border: none;
-      color: rgba(255, 255, 255, 0.7);
-      font-size: 18px;
+      color: #fff;
+      font-size: 20px;
       line-height: 1;
       cursor: pointer;
       padding: 6px;
@@ -1059,8 +1059,8 @@
 
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
-  <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">🔄</button></div>
-  <div id="version">v3.50</div>
+  <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
+  <div id="version">v3.51</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1318,6 +1318,7 @@
             document.getElementById('haunt-reset-btn').addEventListener('click', () => {
               if (window.confirm('Start over? All progress will be lost.')) {
                 localStorage.removeItem(_hauntSaveKey);
+                _hauntSaveKey = null; // prevent any in-flight GPS tick from re-saving before reload
                 window.location.reload();
               }
             });

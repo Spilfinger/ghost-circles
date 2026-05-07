@@ -4,9 +4,9 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.49) — Time Conditions Release
+## Current State (v3.51) — Save/Resume Release
 
-The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system and time/date-aware conditions. Circles can unlock, lock, show, or hide based on the device's local time of day, day of week, or calendar date — in addition to all existing player-action conditions. Time/date conditions now evaluate on the first GPS fix after page load — typically within 8 seconds. The 60-second interval continues to handle ongoing re-evaluation. v3.49 is the stable authoring platform on which experiences are built.
+The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off on reload. A ↺ button in the haunt title bar lets players start over with a confirmation prompt. v3.51 is the stable authoring platform on which experiences are built.
 
 ---
 
@@ -127,6 +127,18 @@ Time-based conditions (`timeOfDay`, `dayOfWeek`, `date`) are evaluated in two wa
 2. Calls `checkProximity` — handles Pass 4 re-locking, activates any newly-passive circles the player is standing inside, and updates visibility (Pass 5).
 
 Logs `time tick: checking N locked circles` each tick (visible in debug mode).
+
+### Player progress persistence (play mode only)
+Play state is automatically saved to `localStorage` after every `checkProximity` call and after every `fireExitActions` call. The save is keyed `ghost-circles-save-<hauntId>` so different haunts never collide. Saved fields:
+
+- `visited` — per-circle visit count
+- `states` — per-circle state (`locked` or `passive`; `active` is saved but restored as `passive` — the engine re-activates on the first GPS tick if the player is still inside, which avoids spurious exit-action firing if they've since moved away)
+- `lockedByEnd` — per-circle flag so circles locked by `lockOnEnd` or an exit-action `lock` stay locked across sessions
+- `inventory` — current quantity per item
+
+On load, the save is applied after `circleRuntime` is built but before GPS starts (`_hauntSaveKey` is set inside the haunt URL loading block). `savePlayState()` guards with `if (!_hauntSaveKey) return` so it is a complete no-op in editor mode.
+
+**Start Over button (↺)** — shown in the haunt title bar (right side, white, `pointer-events: auto` while the bar itself keeps `pointer-events: none`). Tap → `window.confirm` → on confirm: `localStorage.removeItem(saveKey)`, then `_hauntSaveKey = null` (prevents any in-flight GPS tick from re-saving before the reload completes), then `window.location.reload()`.
 
 ### iPhone reliability
 - **Screen Wake Lock**: requested after Tap to Start, reacquired automatically on return from background
@@ -349,6 +361,8 @@ ghost-circles/
 - `playToEndLock` — module-level variable; holds the `rt` of any currently-playing playToEnd whisper, or `null`
 - `lastKnownLatLng` — module-level `{ lat, lng }` updated on every GPS fix; used by `onPlayToEndLockReleased`, the post-initAudio scan, and the 60-second time-condition timer
 - `firstGpsFix` — boolean, true until the first `onPosition` call; triggers an immediate `checkUnlocks` pass for time-based conditions on first fix
+- `_hauntSaveKey` — `ghost-circles-save-<hauntId>` in play mode, `null` in editor mode; guards `savePlayState()` and the Start Over handler
+- `savePlayState()` — writes visited counts, circle states, lockedByEnd flags, and inventory to localStorage; no-op when `_hauntSaveKey` is null
 - `evaluateCondition(cond)` — evaluates a single condition object; supports all types
 - `evaluateConditions(def)` — returns true if ALL unlock conditions are satisfied
 - `evaluateLockConditions(def)` — returns true if ANY lock condition is met
@@ -423,8 +437,7 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 
 - **No file upload in editor**: audio `.m4a` files must be added to the `audio/` folder in the GitHub repo manually. The export checklist will flag missing files.
 - **No circle list panel**: circles can only be selected by tapping them on the map. No list view.
-- **lockedByEnd is session-only**: the flag is not saved in the haunt JSON and resets on page reload. A circle locked by `lockOnEnd` or an exit-action `lock` will return to passive on the player's next session unless `startsLocked` is also set.
-- **Play-state not persisted**: visited counts, inventory, and circle states reset on page reload.
+- **lockedByEnd is session-only in the haunt JSON**: the flag is not serialised, but it is included in the localStorage play-state save, so it persists correctly across reloads for players.
 
 
 ---
@@ -432,5 +445,4 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 ## Next Steps
 
 - **Circle list panel**: scrollable list of all circles with tap-to-select and rename
-- **Player progress persistence**: save visited counts, inventory, and circle states to `localStorage` keyed by haunt `id`, so players can resume a session across reloads
 - **Server storage**: haunts stored server-side with short share codes instead of long compressed URLs

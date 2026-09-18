@@ -108,6 +108,20 @@
       opacity: 0.85;
     }
 
+    /* GPS heartbeat — visual pulse ring on the player dot (play mode only) */
+    @keyframes gps-pulse {
+      0%   { transform: scale(0.8); opacity: 0.6; }
+      100% { transform: scale(3.5); opacity: 0;   }
+    }
+    .gps-pulse-ring {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2px solid #42A5F5;
+      animation: gps-pulse 1.4s ease-out forwards;
+      pointer-events: none;
+    }
+
     /* =====================================================
        EDITOR MODE — all rules below are inert in play mode
        ===================================================== */
@@ -1060,7 +1074,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.51</div>
+  <div id="version">v3.52</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1539,6 +1553,11 @@
     let playToEndLock = null;
     let lastKnownLatLng = null; // updated on every GPS fix; used to re-run proximity on lock release
 
+    // --- GPS heartbeat state (play mode only) ---
+    let heartbeatInterval    = null;  // setInterval handle for the 10 s pulse
+    let heartbeatPulseMarker = null;  // transient Leaflet DivIcon marker for the visual ring
+    let gpsWasStale          = false; // tracks the last-known stale state for transition detection
+
     // Called immediately after the playToEnd lock is released (from both onended paths).
     // 1. Any circle that is already active+inRange but has no audio playing was blocked by
     //    the lock — start its whisper now.
@@ -1550,6 +1569,71 @@
         }
       });
       if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
+    }
+
+    // Play a single gpsok pulse: audio at low volume + visual ring on the player dot.
+    // Suppressed if a priority-20+ whisper is actively playing.
+    function playHeartbeatPulse() {
+      if (!audioCtx || !playerMarker) return;
+      const highPriorityPlaying = Object.values(circleRuntime).some(rt =>
+        rt.activeGain !== null && (rt.def.priority ?? 50) >= 20
+      );
+      if (highPriorityPlaying) return;
+
+      // Audio pulse
+      const buffer = whisperBuffers['gpsok'];
+      if (buffer) {
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.connect(audioCtx.destination);
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(gain);
+        source.start(0);
+        source.onended = () => { try { gain.disconnect(); } catch (_) {} };
+      }
+
+      // Visual pulse — replace any existing ring marker with a fresh one so the animation restarts
+      if (heartbeatPulseMarker) { map.removeLayer(heartbeatPulseMarker); heartbeatPulseMarker = null; }
+      heartbeatPulseMarker = L.marker(playerMarker.getLatLng(), {
+        icon: L.divIcon({
+          className: '',
+          html: '<div class="gps-pulse-ring"></div>',
+          iconSize:   [20, 20],
+          iconAnchor: [10, 10],
+        }),
+        interactive: false,
+        zIndexOffset: -1000,
+      }).addTo(map);
+      setTimeout(() => {
+        if (heartbeatPulseMarker) { map.removeLayer(heartbeatPulseMarker); heartbeatPulseMarker = null; }
+      }, 1500);
+    }
+
+    function startHeartbeat() {
+      if (heartbeatInterval) return;
+      playHeartbeatPulse();
+      heartbeatInterval = setInterval(playHeartbeatPulse, 10000);
+    }
+
+    function stopHeartbeat() {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+
+    // Play the gpslost warning tone once (no GainNode fade needed — plays to completion)
+    function playGpsLost() {
+      if (!audioCtx) return;
+      const buffer = whisperBuffers['gpslost'];
+      if (!buffer) return;
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(1.0, audioCtx.currentTime);
+      gain.connect(audioCtx.destination);
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(gain);
+      source.start(0);
+      source.onended = () => { try { gain.disconnect(); } catch (_) {} };
     }
 
     async function initAudio() {
@@ -1594,6 +1678,22 @@
           }
         }),
       ]);
+
+      // Load GPS heartbeat audio files in play mode
+      if (!EDITOR_MODE) {
+        for (const name of ['gpsok', 'gpslost']) {
+          try {
+            const response = await fetch(`audio/${name}.m4a`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const arrayBuffer = await response.arrayBuffer();
+            whisperBuffers[name] = await new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej));
+            debugLog(`buf ok: ${name} (${Math.round(whisperBuffers[name].duration)}s)`);
+          } catch(e) {
+            debugLog(`buf ERR: ${name} — ${e.message}`);
+          }
+        }
+      }
+
       debugLog(`buffers loaded: ${Object.keys(whisperBuffers).length}`);
       renderDebug();
     }
@@ -1875,6 +1975,8 @@
             startWhisperPlayback(crt);
           }
         });
+        // Begin GPS heartbeat pulse (play mode only)
+        if (!EDITOR_MODE) startHeartbeat();
       }).catch(() => {});
       // Request wake lock to keep screen on during play
       requestWakeLock();
@@ -1889,7 +1991,7 @@
 
     const GPS_STALE_MS = 10000; // grey out the dot after 10 s without a fix
 
-    // Poll every 2 s and update the marker colour to reflect GPS freshness
+    // Poll every 2 s: update marker colour and (in play mode) manage heartbeat on GPS lost/recovered
     setInterval(() => {
       if (!playerMarker) return;
       const stale = lastFixTime === null || (Date.now() - lastFixTime) > GPS_STALE_MS;
@@ -1897,6 +1999,17 @@
         ? { color: '#757575', fillColor: '#bdbdbd' }   // grey — stale
         : { color: '#1565C0', fillColor: '#42A5F5' }   // blue — fresh
       );
+      if (!EDITOR_MODE) {
+        if (stale && !gpsWasStale) {
+          // GPS just lost — stop heartbeat and play warning tone
+          stopHeartbeat();
+          playGpsLost();
+        } else if (!stale && gpsWasStale) {
+          // GPS just recovered — resume heartbeat immediately
+          startHeartbeat();
+        }
+        gpsWasStale = stale;
+      }
     }, 2000);
 
     // Re-evaluate conditions every 60 s so time-based conditions (timeOfDay, dayOfWeek,

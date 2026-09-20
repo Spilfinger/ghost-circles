@@ -576,19 +576,7 @@
       -webkit-tap-highlight-color: transparent;
     }
 
-    #panel-close-btn {
-      position: absolute;
-      top: 14px;
-      right: 16px;
-      background: none;
-      border: none;
-      color: rgba(255, 255, 255, 0.45);
-      font-size: 20px;
-      line-height: 1;
-      cursor: pointer;
-      padding: 4px 6px;
-      -webkit-tap-highlight-color: transparent;
-    }
+
 
     #prop-reposition-btn {
       display: block;
@@ -1118,7 +1106,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.54</div>
+  <div id="version">v3.55</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1209,7 +1197,7 @@
   </div>
 
   <div id="editor-panel">
-    <button id="panel-close-btn" aria-label="Close">✕</button>
+
     <div class="panel-handle-bar"></div>
     <div class="panel-body">
 
@@ -3756,7 +3744,6 @@
       });
 
       // Close button
-      document.getElementById('panel-close-btn').addEventListener('click', () => deselectCircle());
 
       // ---- Items sheet ----
 

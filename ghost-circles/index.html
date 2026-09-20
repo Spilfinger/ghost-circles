@@ -434,12 +434,56 @@
       -webkit-tap-highlight-color: transparent;
     }
     .prop-toggle.on { background: #2e7d32; }
-    /* Editor-only tool toggle — orange distinguishes it from haunt properties */
-    .prop-toggle.editor-toggle.on { background: #e65100; }
-    .prop-row-editor-tool { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); }
-    .prop-row-editor-tool .prop-label { color: rgba(255, 255, 255, 0.45); }
     /* Visually dim a prop row whose control is not currently applicable */
     .prop-row.prop-row-inactive { opacity: 0.3; pointer-events: none; }
+
+    /* Circle name headline row */
+    .prop-name-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      margin-top: 6px;
+    }
+    .prop-name-input {
+      flex: 1;
+      min-width: 0;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 0;
+      color: #fff;
+      font-size: 20px;
+      font-weight: 600;
+      font-family: system-ui, sans-serif;
+      padding: 4px 0;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    .prop-name-input:focus { border-bottom-color: rgba(255, 255, 255, 0.5); }
+    /* Overlap navigator arrow button — greyed and inert by default, lit when active */
+    .prop-next-circle-btn {
+      width: 34px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: 1.5px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.22);
+      font-size: 15px;
+      flex-shrink: 0;
+      pointer-events: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .prop-next-circle-btn.active {
+      color: rgba(255, 255, 255, 0.75);
+      border-color: rgba(255, 255, 255, 0.38);
+      pointer-events: auto;
+      cursor: pointer;
+    }
+    .prop-next-circle-btn.active:active { background: rgba(255, 255, 255, 0.1); }
 
     /* Volume slider */
     .prop-slider {
@@ -1074,7 +1118,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.53</div>
+  <div id="version">v3.54</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1169,10 +1213,14 @@
     <div class="panel-handle-bar"></div>
     <div class="panel-body">
 
-      <div class="prop-section">Circle</div>
+      <div class="prop-name-row">
+        <input id="prop-name" class="prop-name-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+        <button id="prop-next-circle-btn" class="prop-next-circle-btn" aria-label="Next overlapping circle">→</button>
+      </div>
       <div class="prop-row">
-        <span class="prop-label">Name</span>
-        <input id="prop-name" class="prop-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+        <span class="prop-label">Whisper</span>
+        <input id="prop-whisper" class="prop-input mono" type="text" placeholder="filename"
+               autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
       </div>
       <div class="prop-row">
         <span class="prop-label">Radius (m)</span>
@@ -1195,11 +1243,6 @@
         <button class="prop-toggle" id="prop-lock-on-end" aria-label="Lock when done"></button>
       </div>
       <div class="prop-row">
-        <span class="prop-label">Whisper</span>
-        <input id="prop-whisper" class="prop-input mono" type="text" placeholder="filename"
-               autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
-      </div>
-      <div class="prop-row">
         <span class="prop-label">Volume</span>
         <input id="prop-volume" class="prop-slider" type="range" min="0" max="2" step="0.05" value="1" />
         <span class="prop-slider-readout" id="prop-volume-readout">100%</span>
@@ -1211,10 +1254,6 @@
       <div class="prop-row">
         <span class="prop-label">Starts locked</span>
         <button class="prop-toggle" id="prop-starts-locked" aria-label="Starts locked"></button>
-      </div>
-      <div class="prop-row prop-row-editor-tool">
-        <span class="prop-label">Hide in editor</span>
-        <button class="prop-toggle editor-toggle" id="prop-hide-in-editor" aria-label="Hide in editor"></button>
       </div>
 
       <button id="prop-reposition-btn">Reposition</button>
@@ -2234,7 +2273,9 @@
       let placementActive    = false;
       let repositionActive   = false; // true while the reposition preview is shown
       let pickerActive       = false; // true while the action picker is open
-      let selectedCircleName = null;
+      let selectedCircleName  = null;
+      let overlappingCircles  = []; // circle names at the last tapped latlng that contain that point
+      let overlappingIndex    = 0;  // index of selectedCircleName within overlappingCircles
 
       const crossIcon = L.divIcon({
         className:  'cross-icon',
@@ -3093,7 +3134,7 @@
         document.getElementById('prop-whisper').value  = def.whisper ?? '';
         document.getElementById('prop-visible').classList.toggle('on', def.visible !== false);
         document.getElementById('prop-starts-locked').classList.toggle('on', def.startsLocked === true);
-        document.getElementById('prop-hide-in-editor').classList.toggle('on', rt.editorHidden === true);
+        updateNavButton();
         renderConditions(name);
         renderAllConditionArrays(name);
         renderActions(name);
@@ -3120,7 +3161,22 @@
         closePanel();
       };
 
-      const selectCircle = (name) => {
+      const updateNavButton = () => {
+        const btn = document.getElementById('prop-next-circle-btn');
+        btn.classList.toggle('active', overlappingCircles.length > 1);
+      };
+
+      // tappedLatLng: Leaflet LatLng of the tap point — pass on direct user taps to
+      // recompute which circles overlap there. Omit when cycling via the → button.
+      const selectCircle = (name, tappedLatLng) => {
+        if (tappedLatLng !== undefined) {
+          overlappingCircles = CIRCLE_DEFS
+            .filter(d => tappedLatLng.distanceTo(L.latLng(d.lat, d.lng)) <= d.radius)
+            .map(d => d.name);
+          if (overlappingCircles.length === 0) overlappingCircles = [name];
+          overlappingIndex = overlappingCircles.indexOf(name);
+          if (overlappingIndex < 0) { overlappingCircles.unshift(name); overlappingIndex = 0; }
+        }
         if (selectedCircleName === name) return;
         if (selectedCircleName) clearSelection();
         selectedCircleName = name;
@@ -3137,9 +3193,9 @@
         rt.centerMarker = marker;
         // Use rt.def.name (not the closed-over name) so renames don't break tap-to-select.
         // After a rename, circleRuntime[name] is gone but rt.def.name is always current.
-        const onTap = e => { L.DomEvent.stopPropagation(e); selectCircle(rt.def.name); };
-        rt.leafletCircle.on('click', onTap);
-        marker.on('click', onTap);
+        // Pass e.latlng so selectCircle can compute which circles overlap the tapped point.
+        rt.leafletCircle.on('click', e => { L.DomEvent.stopPropagation(e); selectCircle(rt.def.name, e.latlng); });
+        marker.on('click', e => { L.DomEvent.stopPropagation(e); selectCircle(rt.def.name, L.latLng(rt.def.lat, rt.def.lng)); });
       };
 
       const enterRepositionMode = () => {
@@ -3435,7 +3491,7 @@
           circleRuntime[def.name] = {
             def, leafletCircle, state, inRange: false, visited: 0, onMap: true,
             activeGain: null, activeSource: null, playsRemaining: 0,
-            lockedByEnd: false, editorHidden: false,
+            lockedByEnd: false,
           };
           addEditorToCircle(def.name);
         });
@@ -3497,10 +3553,8 @@
       }
 
       // Editor always shows all circles regardless of def.visible (a play-mode property).
-      // editorHidden is session-only and never saved, so always reset it on load.
       CIRCLE_DEFS.forEach(def => {
         const rt = circleRuntime[def.name];
-        rt.editorHidden = false;
         if (!rt.onMap) { rt.leafletCircle.addTo(map); rt.onMap = true; }
       });
 
@@ -3628,20 +3682,14 @@
         saveDraft();
       });
 
-      document.getElementById('prop-hide-in-editor').addEventListener('click', function () {
-        if (!selectedCircleName) return;
-        const rt    = circleRuntime[selectedCircleName];
-        const nowOn = !this.classList.contains('on');
-        this.classList.toggle('on', nowOn);
-        rt.editorHidden = nowOn;
-        // Editor-only — no effect on def; just toggle Leaflet layer visibility
-        if (nowOn) {
-          if (rt.onMap)        { map.removeLayer(rt.leafletCircle); rt.onMap = false; }
-          if (rt.centerMarker) map.removeLayer(rt.centerMarker);
-        } else {
-          if (!rt.onMap)       { rt.leafletCircle.addTo(map); rt.onMap = true; }
-          if (rt.centerMarker) rt.centerMarker.addTo(map);
-        }
+      document.getElementById('prop-next-circle-btn').addEventListener('click', () => {
+        if (overlappingCircles.length <= 1) return;
+        overlappingIndex = (overlappingIndex + 1) % overlappingCircles.length;
+        const nextName = overlappingCircles[overlappingIndex];
+        if (selectedCircleName) clearSelection();
+        selectedCircleName = nextName;
+        circleRuntime[nextName].leafletCircle.setStyle({ dashArray: '6 4', weight: 3 });
+        openPanel(nextName);
       });
 
       // Add action button + picker cancel + backdrop

@@ -1106,7 +1106,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.55</div>
+  <div id="version">v3.56</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1848,6 +1848,9 @@
           // exited because audio was still playing (playToEnd). pendingExitActions was set
           // at that moment; fire now that audio has naturally ended.
           if (rt.pendingExitActions) fireExitActions(rt);
+          // Re-evaluate lockConditions for lockOnEnd circles with no exit actions — if
+          // fireExitActions was not called above, reEvaluateLockConditions won't have run yet.
+          else if (rt.def.lockOnEnd) reEvaluateLockConditions();
           onPlayToEndLockReleased();
         };
         return;
@@ -1863,6 +1866,29 @@
         try { if (source) source.stop(); } catch (_) {}
         try { gain.disconnect(); } catch (_) {}
       }, 1100);
+    }
+
+    // Sweep all circles with lockConditions and lock any whose conditions are now met.
+    // Loops to stability so chains (A locks → B's isLocked(A) fires → B locks → …) resolve
+    // in one call. Called whenever a circle locks outside the normal checkProximity flow
+    // so that dependent lockConditions fire immediately without waiting for the next GPS tick.
+    function reEvaluateLockConditions() {
+      let anyLocked;
+      do {
+        anyLocked = false;
+        CIRCLE_DEFS.forEach(def => {
+          if (!def.lockConditions?.length) return;
+          const rt = circleRuntime[def.name];
+          if ((rt.state === 'passive' || rt.state === 'active') && evaluateLockConditions(def)) {
+            if (rt.state === 'active') stopWhisperPlayback(rt);
+            rt.state   = 'locked';
+            rt.inRange = false;
+            rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
+            debugLog(`lock cond (immediate): ${def.name}`);
+            anyLocked = true;
+          }
+        });
+      } while (anyLocked);
     }
 
     // Fire all exitActions defined on a circle. Called on physical exit (immediately or
@@ -1900,6 +1926,9 @@
           debugLog(`exit action: removeItem → ${action.item}`);
         }
       });
+      // Any circles locked by exit actions above may satisfy lockConditions on other circles;
+      // resolve those immediately rather than waiting for the next GPS tick.
+      reEvaluateLockConditions();
       savePlayState();
     }
 

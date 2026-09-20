@@ -1074,7 +1074,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.52</div>
+  <div id="version">v3.53</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1554,9 +1554,9 @@
     let lastKnownLatLng = null; // updated on every GPS fix; used to re-run proximity on lock release
 
     // --- GPS heartbeat state (play mode only) ---
-    let heartbeatInterval    = null;  // setInterval handle for the 10 s pulse
-    let heartbeatPulseMarker = null;  // transient Leaflet DivIcon marker for the visual ring
-    let gpsWasStale          = false; // tracks the last-known stale state for transition detection
+    let heartbeatInterval = null;  // setInterval handle for the 10 s pulse
+    let gpsWasStale       = false; // tracks the last-known stale state for transition detection
+    let gpsLostTimer      = null;  // setTimeout handle for the 3 s deferred GPS-lost action
 
     // Called immediately after the playToEnd lock is released (from both onended paths).
     // 1. Any circle that is already active+inRange but has no audio playing was blocked by
@@ -1571,7 +1571,23 @@
       if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
     }
 
-    // Play a single gpsok pulse: audio at low volume + visual ring on the player dot.
+    // Spawn a single expanding ring at the player's current position; self-removes after 1.5 s.
+    function spawnPulseRing() {
+      if (!playerMarker) return;
+      const m = L.marker(playerMarker.getLatLng(), {
+        icon: L.divIcon({
+          className: '',
+          html: '<div class="gps-pulse-ring"></div>',
+          iconSize:   [20, 20],
+          iconAnchor: [10, 10],
+        }),
+        interactive: false,
+        zIndexOffset: -1000,
+      }).addTo(map);
+      setTimeout(() => { try { map.removeLayer(m); } catch (_) {} }, 1500);
+    }
+
+    // Play a gpsok pulse: audio at low volume + two ripple rings 1 s apart.
     // Suppressed if a priority-20+ whisper is actively playing.
     function playHeartbeatPulse() {
       if (!audioCtx || !playerMarker) return;
@@ -1593,21 +1609,9 @@
         source.onended = () => { try { gain.disconnect(); } catch (_) {} };
       }
 
-      // Visual pulse — replace any existing ring marker with a fresh one so the animation restarts
-      if (heartbeatPulseMarker) { map.removeLayer(heartbeatPulseMarker); heartbeatPulseMarker = null; }
-      heartbeatPulseMarker = L.marker(playerMarker.getLatLng(), {
-        icon: L.divIcon({
-          className: '',
-          html: '<div class="gps-pulse-ring"></div>',
-          iconSize:   [20, 20],
-          iconAnchor: [10, 10],
-        }),
-        interactive: false,
-        zIndexOffset: -1000,
-      }).addTo(map);
-      setTimeout(() => {
-        if (heartbeatPulseMarker) { map.removeLayer(heartbeatPulseMarker); heartbeatPulseMarker = null; }
-      }, 1500);
+      // Visual pulse — first ring immediately, second ring 1 s later
+      spawnPulseRing();
+      setTimeout(spawnPulseRing, 1000);
     }
 
     function startHeartbeat() {
@@ -1627,7 +1631,7 @@
       const buffer = whisperBuffers['gpslost'];
       if (!buffer) return;
       const gain = audioCtx.createGain();
-      gain.gain.setValueAtTime(1.0, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
       gain.connect(audioCtx.destination);
       const source = audioCtx.createBufferSource();
       source.buffer = buffer;
@@ -2001,14 +2005,25 @@
       );
       if (!EDITOR_MODE) {
         if (stale && !gpsWasStale) {
-          // GPS just lost — stop heartbeat and play warning tone
-          stopHeartbeat();
-          playGpsLost();
+          // GPS just went grey — arm a 3 s timer before acting, to ignore brief hiccups
+          gpsWasStale = true;
+          gpsLostTimer = setTimeout(() => {
+            gpsLostTimer = null;
+            stopHeartbeat();
+            playGpsLost();
+          }, 3000);
         } else if (!stale && gpsWasStale) {
-          // GPS just recovered — resume heartbeat immediately
-          startHeartbeat();
+          // GPS recovered
+          gpsWasStale = false;
+          if (gpsLostTimer) {
+            // Timer hasn't fired yet — cancel it; heartbeat was never stopped
+            clearTimeout(gpsLostTimer);
+            gpsLostTimer = null;
+          } else {
+            // Timer already fired — heartbeat was stopped; restart it
+            startHeartbeat();
+          }
         }
-        gpsWasStale = stale;
       }
     }, 2000);
 

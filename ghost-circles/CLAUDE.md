@@ -4,9 +4,15 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.51) — Save/Resume Release
+## Current State (v3.56)
 
-The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off on reload. A ↺ button in the haunt title bar lets players start over with a confirmation prompt. v3.51 is the stable authoring platform on which experiences are built.
+The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off on reload. A ↺ button in the haunt title bar lets players start over with a confirmation prompt.
+
+v3.52–v3.53 added a GPS heartbeat system (play mode only): a quiet audio pulse every 10 seconds with a double ripple CSS animation on the player dot, a GPS-lost warning after 3 seconds of signal dropout, and automatic heartbeat resume on recovery.
+
+v3.54–v3.55 improved the editor panel: circle name is now a bold headline at the top, Whisper is the second field, the × close button is removed, and a → navigator lets authors cycle through overlapping circles at a tapped map location (replacing the "Hide in editor" toggle).
+
+v3.56 fixed lockConditions not evaluating immediately when a circle locks via lockOnEnd or an exit action — a new `reEvaluateLockConditions()` function runs a GPS-independent sweep after any lock event.
 
 ---
 
@@ -25,7 +31,7 @@ Each circle is always in one of three states:
 `conditions` array on a circle — ALL must be true to unlock. Empty array means passive from start.
 
 ### Lock conditions (passive/active → locked)
-`lockConditions` array on a circle — ANY one being true immediately re-locks the circle (fading audio if playing). When the lock condition clears and unlock conditions are still met, the circle automatically restores to passive. Evaluated in Pass 4 on every GPS tick.
+`lockConditions` array on a circle — ANY one being true immediately re-locks the circle (fading audio if playing). When the lock condition clears and unlock conditions are still met, the circle automatically restores to passive. Evaluated in Pass 4 on every GPS tick, and also immediately via `reEvaluateLockConditions()` whenever any circle locks outside the normal GPS flow (lockOnEnd, exit-action lock).
 
 ### Condition types
 All types work in `conditions`, `lockConditions`, `visibleConditions`, and `hideConditions`:
@@ -102,7 +108,7 @@ Circle-to-circle unlock/lock/show/hide actions are also authored in the "When vi
 
 **Timing with `lockOnEnd`:** When the player stays inside through the full audio and `lockOnEnd` fires, exit actions also fire at that moment (natural completion = the effective exit).
 
-`fireExitActions(rt)` is the shared function that handles all six action types and resets `rt.pendingExitActions`.
+`fireExitActions(rt)` is the shared function that handles all six action types, resets `rt.pendingExitActions`, and calls `reEvaluateLockConditions()` so any circles whose lockConditions reference the newly-locked targets are re-locked immediately.
 
 ### Immediate activation on unlock
 If a player is already standing inside a circle when it unlocks, it activates immediately — no need to exit and re-enter. `checkProximity` re-runs recursively on unlock.
@@ -139,6 +145,17 @@ Play state is automatically saved to `localStorage` after every `checkProximity`
 On load, the save is applied after `circleRuntime` is built but before GPS starts (`_hauntSaveKey` is set inside the haunt URL loading block). `savePlayState()` guards with `if (!_hauntSaveKey) return` so it is a complete no-op in editor mode.
 
 **Start Over button (↺)** — shown in the haunt title bar (right side, white, `pointer-events: auto` while the bar itself keeps `pointer-events: none`). Tap → `window.confirm` → on confirm: `localStorage.removeItem(saveKey)`, then `_hauntSaveKey = null` (prevents any in-flight GPS tick from re-saving before the reload completes), then `window.location.reload()`.
+
+### GPS heartbeat (play mode only)
+A background pulse fires every 10 seconds after Tap to Start:
+
+- **Audio**: plays `gpsok.m4a` at volume 0.3 through a short-lived GainNode. Suppressed entirely if any circle with `priority ≥ 20` has an active whisper playing.
+- **Visual**: two `.gps-pulse-ring` CSS animation elements spawn on the player dot — the first immediately, the second 1 second later. Each ring expands from the dot's radius and fades out over 1.4 seconds (`ease-out forwards`), then the Leaflet DivIcon marker is removed.
+- **GPS lost**: when the dot first turns grey, a 3-second timer arms. If the dot is still grey after 3 seconds, the heartbeat stops and `gpslost.m4a` plays once at volume 0.3. Brief dropouts that recover within 3 seconds are ignored.
+- **GPS recovered**: when the dot returns to blue after a confirmed loss, the heartbeat resumes immediately with an instant pulse.
+- Both audio files (`gpsok.m4a`, `gpslost.m4a`) are loaded inside `initAudio()` alongside whisper buffers, guarded by `!EDITOR_MODE`.
+
+State variables: `heartbeatInterval` (setInterval handle), `gpsWasStale` (transition detector), `gpsLostTimer` (3-second debounce setTimeout).
 
 ### iPhone reliability
 - **Screen Wake Lock**: requested after Tap to Start, reacquired automatically on return from background
@@ -181,23 +198,27 @@ The editor is a full in-browser authoring tool. Activated by `?editor=true` in t
 Tap + to enter placement mode. Tap the map to drop a circle. Drag to reposition before confirming.
 
 ### Circle properties panel
-All properties are live-editable and autosaved:
+All properties are live-editable and autosaved. The panel opens as a bottom sheet when a circle is tapped.
+
+The **circle name** is displayed as a bold 20px headline at the top of the panel, directly editable inline. A **→ navigator button** sits to its right (see Overlapping circle navigator below).
+
+Fields in order:
 
 | Property | Type | Default | Notes |
 |---|---|---|---|
-| Name | text | `circle-N` | Unique identifier — used in conditions and actions |
-| Lat / Lng | number | placement point | Editable for fine positioning |
+| Name | text (headline) | `circle-N` | Unique identifier — used in conditions and actions |
+| Whisper | text | `""` | Second field, directly beneath the name |
 | Radius | number | 40 m | |
 | Priority | number | 50 | Higher = takes precedence in overlaps |
-| Starts locked | toggle | off | Overrides conditions at game start |
-| Hide in editor | toggle | off | Session-only; resets on refresh |
-| Hide from players | toggle | off | Sets `visible: false` |
 | Repeat | number | 1 | 0 = loop, N = play N times |
 | Play to end on exit | toggle | off | Greyed out when repeat = 0 |
 | Lock when done | toggle | off | Greyed out when repeat = 0 or play-to-end is off |
-| Whisper | text | `""` | Bare filename without extension (e.g. `rain`) |
 | Volume | slider | 1.0 (100%) | Range 0–2.0 |
+| Visible at start | toggle | on | Sets `visible: false` when off |
+| Starts locked | toggle | off | Overrides conditions at game start |
 | Delete | button | — | Removes circle |
+
+Tapping the map outside the panel closes it (no × button).
 
 ### Conditions
 Four condition sections, each with an **Add condition** button opening a multi-step picker:
@@ -247,6 +268,11 @@ Generates a compressed play URL using LZString. Modal shows the URL (tap to copy
 
 ### Import (↓)
 Accepts a haunt URL or raw JSON. Rebuilds map, preserves `id`/`created`, autosaves.
+
+### Overlapping circle navigator
+When multiple circles overlap at the same map location, tapping that spot reveals a **→ arrow button** next to the circle name in the panel. The button is greyed out and inert when only one circle is at the tapped point. When multiple circles are found, the button lights up — each tap cycles to the next overlapping circle in the order they appear in `CIRCLE_DEFS`, updating all panel fields and moving the dashed selection outline on the map.
+
+Overlap is computed at tap time: `selectCircle(name, tappedLatLng)` filters `CIRCLE_DEFS` to circles where `tappedLatLng.distanceTo(center) ≤ radius`. The result is stored in `overlappingCircles` (array of names) and `overlappingIndex` (current position). Cycling via → preserves the existing `overlappingCircles` array without recomputing.
 
 ### Clear draft (🗑)
 Resets to blank canvas — new `id`, empty circles and items, "New Haunt" title.
@@ -321,7 +347,7 @@ When a `?haunt=` URL parameter is present:
 
 ```
 ghost-circles/
-  index.html          — the entire app (engine + editor, ~3500 lines)
+  index.html          — the entire app (engine + editor, ~3900 lines)
   manifest.json       — PWA manifest (name, icons, display mode)
   sw.js               — service worker (caching, auto-update on deploy)
   _headers            — Netlify headers (no-cache for sw.js + index.html, audio/mp4 MIME type)
@@ -330,6 +356,8 @@ ghost-circles/
     near.m4a          — proof-of-concept whisper
     trigger.m4a       — archived
     youfoundit.m4a    — archived
+    gpsok.m4a         — GPS heartbeat pulse (play mode)
+    gpslost.m4a       — GPS lost warning tone (play mode)
 ```
 
 ---
@@ -357,11 +385,19 @@ ghost-circles/
 - `CIRCLE_DEFS` — array of circle definition objects (the haunt data)
 - `PLAYER_ITEMS` — array of item definitions `{ name, icon, quantity, startPresent, audio }`
 - `playerInventory` — plain object mapping item name → current quantity
+- `CIRCLE_DEFS` — array of circle definition objects (the haunt data)
+- `PLAYER_ITEMS` — array of item definitions `{ name, icon, quantity, startPresent, audio }`
+- `playerInventory` — plain object mapping item name → current quantity
 - `circleRuntime` — object keyed by name: `{ def, leafletCircle, state, inRange, visited, onMap, activeGain, activeSource, playsRemaining, lockedByEnd, pendingExitActions }`
 - `playToEndLock` — module-level variable; holds the `rt` of any currently-playing playToEnd whisper, or `null`
 - `lastKnownLatLng` — module-level `{ lat, lng }` updated on every GPS fix; used by `onPlayToEndLockReleased`, the post-initAudio scan, and the 60-second time-condition timer
 - `firstGpsFix` — boolean, true until the first `onPosition` call; triggers an immediate `checkUnlocks` pass for time-based conditions on first fix
 - `_hauntSaveKey` — `ghost-circles-save-<hauntId>` in play mode, `null` in editor mode; guards `savePlayState()` and the Start Over handler
+- `heartbeatInterval` — setInterval handle for the 10-second GPS heartbeat pulse; `null` when stopped (play mode only)
+- `gpsWasStale` — boolean tracking the previous staleness state; used to detect GPS lost/recovered transitions
+- `gpsLostTimer` — setTimeout handle for the 3-second debounce before confirming GPS loss; `null` when not armed
+- `overlappingCircles` — editor-only array of circle names at the last tapped map location that geometrically contain the tapped point
+- `overlappingIndex` — editor-only index of `selectedCircleName` within `overlappingCircles`
 - `savePlayState()` — writes visited counts, circle states, lockedByEnd flags, and inventory to localStorage; no-op when `_hauntSaveKey` is null
 - `evaluateCondition(cond)` — evaluates a single condition object; supports all types
 - `evaluateConditions(def)` — returns true if ALL unlock conditions are satisfied
@@ -369,15 +405,22 @@ ghost-circles/
 - `computeVisibility(def)` — returns whether a circle should currently be on the map
 - `checkUnlocks(userLatLng)` — promotes locked circles whose conditions are met; skips `lockedByEnd` circles unconditionally; returns true if anything promoted
 - `checkProximity(lat, lng)` — five-pass algorithm: (1) update inRange → (2) find maxPriority → (3) resolve transitions + inventoryActions + checkUnlocks + exitActions → recurse if unlocks → (4) re-lock/re-unlock (skips lockedByEnd) → (5) update dynamic map visibility
+- `reEvaluateLockConditions()` — GPS-independent sweep: locks all passive/active circles whose `lockConditions` are currently met; loops until stable so lock chains resolve in one call (A locks → B's isLocked(A) fires → B locks → …). Called from `fireExitActions` and from `stopWhisperPlayback`'s onended when lockOnEnd fires with no pending exit actions.
 - `startWhisperPlayback(rt)` — checks playToEndLock, claims it if playToEnd, starts audio per repeat setting
 - `playNextInSequence(rt, gain)` — chains sequential plays via `onended`; on natural completion fires lockOnEnd, `fireExitActions`, then `onPlayToEndLockReleased`
 - `stopWhisperPlayback(rt)` — if playToEnd: lets audio run to end, sets `pendingExitActions` flag on exit, fires `fireExitActions` then `onPlayToEndLockReleased` in onended; otherwise fades over 1s and stops
-- `fireExitActions(rt)` — executes all `exitActions` on the circle's def; handles lock/unlock/show/hide/addItem/removeItem; resets `rt.pendingExitActions`
+- `fireExitActions(rt)` — executes all `exitActions` on the circle's def; handles lock/unlock/show/hide/addItem/removeItem; resets `rt.pendingExitActions`; calls `reEvaluateLockConditions()` at the end
 - `onPlayToEndLockReleased()` — scans circleRuntime for active+inRange+silent circles and starts their whispers; then calls checkProximity for any remaining passive circles
-- `initAudio()` — creates AudioContext; pre-loads all whisper and item audio files using callback-form `decodeAudioData` wrapped in a Promise; logs per-buffer success/failure with duration
+- `spawnPulseRing()` — creates a Leaflet DivIcon marker at the player's current position with a `.gps-pulse-ring` CSS animation; self-removes after 1.5 s (play mode only)
+- `playHeartbeatPulse()` — plays `gpsok.m4a` at volume 0.3 and spawns two pulse rings 1 second apart; no-op if a priority-20+ whisper is active (play mode only)
+- `startHeartbeat()` / `stopHeartbeat()` — start/stop the 10-second heartbeat interval; `startHeartbeat` fires an immediate pulse on call (play mode only)
+- `playGpsLost()` — plays `gpslost.m4a` once at volume 0.3 (play mode only)
+- `initAudio()` — creates AudioContext; pre-loads all whisper, item, and heartbeat audio files using callback-form `decodeAudioData` wrapped in a Promise; logs per-buffer success/failure with duration
 - `startTracking()` — starts (or restarts) the GPS watcher
 - `renderInventory()` — re-renders the inventory row
 - `playItemAudio(item)` — plays an item's description audio once
+- `updateNavButton()` — editor: toggles the `active` class on `#prop-next-circle-btn` based on whether `overlappingCircles.length > 1`
+- `selectCircle(name, tappedLatLng)` — editor: selects a circle, and if `tappedLatLng` is provided recomputes `overlappingCircles` for that tap point
 - `saveDraft()` / `saveDraftDebounced()` — writes haunt state (circles + items) to localStorage
 - `showFlash(msg, durationMs)` — generic flash message helper
 - `generateId()` — returns a random hex string used as haunt `id`
@@ -394,6 +437,7 @@ ghost-circles/
 - `whisperBuffers` is keyed by bare name for whispers and full path for item audio (e.g. `whisperBuffers['rain']`)
 - Audio files must be **uploaded manually** to the `audio/` folder in the GitHub repo
 - The export modal audio checklist (HEAD requests) shows which files are present/missing before sharing
+- `gpsok.m4a` and `gpslost.m4a` are system audio files for the GPS heartbeat; they are loaded in `initAudio()` in play mode and do not appear in the export checklist
 
 ---
 
@@ -417,6 +461,7 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 - Unlock skipped: `unlock SKIP: <name> (lockedByEnd)`
 - Pass 4 skip: `pass4 SKIP: <name> (lockedByEnd)`
 - Exit actions: `exit action: lock/unlock/show/hide/addItem/removeItem → <target>`
+- Immediate lock condition: `lock cond (immediate): <name>`
 - Time tick: `time tick: checking <N> locked circles`
 
 ---
@@ -436,7 +481,7 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 ## Known Limitations
 
 - **No file upload in editor**: audio `.m4a` files must be added to the `audio/` folder in the GitHub repo manually. The export checklist will flag missing files.
-- **No circle list panel**: circles can only be selected by tapping them on the map. No list view.
+- **No circle list panel**: circles can only be selected by tapping them on the map (with the → navigator for overlapping circles). No scrollable list view.
 - **lockedByEnd is session-only in the haunt JSON**: the flag is not serialised, but it is included in the localStorage play-state save, so it persists correctly across reloads for players.
 
 
@@ -444,5 +489,5 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 
 ## Next Steps
 
-- **Circle list panel**: scrollable list of all circles with tap-to-select and rename
+- **Circle list panel**: scrollable list of all circles with tap-to-select and rename (the → navigator handles overlaps but not a full inventory of all circles)
 - **Server storage**: haunts stored server-side with short share codes instead of long compressed URLs

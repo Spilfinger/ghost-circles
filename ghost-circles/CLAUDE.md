@@ -4,7 +4,7 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.56)
+## Current State (v3.57)
 
 The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off on reload. A ↺ button in the haunt title bar lets players start over with a confirmation prompt.
 
@@ -13,6 +13,8 @@ v3.52–v3.53 added a GPS heartbeat system (play mode only): a quiet audio pulse
 v3.54–v3.55 improved the editor panel: circle name is now a bold headline at the top, Whisper is the second field, the × close button is removed, and a → navigator lets authors cycle through overlapping circles at a tapped map location (replacing the "Hide in editor" toggle).
 
 v3.56 fixed lockConditions not evaluating immediately when a circle locks via lockOnEnd or an exit action — a new `reEvaluateLockConditions()` function runs a GPS-independent sweep after any lock event.
+
+v3.57 added dwell time: a per-circle `dwellTime` field (integer seconds, default 0) that requires the player to remain inside a circle for the specified duration before it activates. Zero is a no-op — all existing haunts are unaffected.
 
 ---
 
@@ -81,6 +83,11 @@ Requires `playToEnd: true` to be practically useful. The editor greys out `lockO
 
 ### lockedByEnd flag
 `rt.lockedByEnd` is a runtime-only flag (not saved in the haunt JSON). When set, `checkUnlocks` and Pass 4 skip the circle unconditionally — it cannot be re-promoted regardless of its `conditions` array. Also set by exit-action `lock` so that externally locked circles are equally protected from auto-promotion.
+
+### Dwell time
+`dwellTime` per circle, integer seconds, default `0`. When `0`, the circle activates immediately on entry as always. When greater than `0`, entry starts a silent countdown — if the player is still inside when it expires, the circle activates normally (state, audio, vibration, inventory actions, unlock cascades). If the player leaves before the countdown completes, it is cancelled with no effect. Re-entry after leaving restarts the countdown from the beginning.
+
+Implementation: `rt.dwellTimer` holds the `setTimeout` handle while counting. Pass 3 of `checkProximity` arms the timer on the first `shouldBeActive && !wasActive` tick for a given entry (the `!rt.dwellTimer` guard prevents GPS ticks from resetting an already-running countdown). Timer cancellation happens in the `!shouldBeActive && wasActive` branch (active → passive, defensive) and in a dedicated `!shouldBeActive && !wasActive && rt.dwellTimer` branch (player left or was priority-demoted mid-countdown). When the timer fires it calls `checkProximity(lastKnownLatLng...)` to handle unlock cascades, Pass 4, Pass 5, and `savePlayState` in one shot. `dwellTimer` is never serialised.
 
 ### Volume
 `volume` per circle, range 0–2.0, default 1.0 (100%). Applied to the GainNode at playback start.
@@ -209,6 +216,7 @@ Fields in order:
 | Name | text (headline) | `circle-N` | Unique identifier — used in conditions and actions |
 | Whisper | text | `""` | Second field, directly beneath the name |
 | Radius | number | 40 m | |
+| Dwell time | number | 0 s | Seconds player must remain inside before activation; 0 = immediate |
 | Priority | number | 50 | Higher = takes precedence in overlaps |
 | Repeat | number | 1 | 0 = loop, N = play N times |
 | Play to end on exit | toggle | off | Greyed out when repeat = 0 |
@@ -305,6 +313,7 @@ Haunts are serialised as JSON and LZString-compressed into the `?haunt=` URL par
       "repeat":      1,
       "playToEnd":   false,
       "lockOnEnd":   false,
+      "dwellTime":   0,
       "volume":      1.0,
       "whisper":     "rain",
       "conditions":        [],
@@ -327,7 +336,7 @@ Haunts are serialised as JSON and LZString-compressed into the `?haunt=` URL par
 }
 ```
 
-Runtime-only fields (`lockedByEnd`, `pendingExitActions`) are never serialised.
+Runtime-only fields (`lockedByEnd`, `pendingExitActions`, `dwellTimer`) are never serialised.
 
 ---
 
@@ -385,10 +394,7 @@ ghost-circles/
 - `CIRCLE_DEFS` — array of circle definition objects (the haunt data)
 - `PLAYER_ITEMS` — array of item definitions `{ name, icon, quantity, startPresent, audio }`
 - `playerInventory` — plain object mapping item name → current quantity
-- `CIRCLE_DEFS` — array of circle definition objects (the haunt data)
-- `PLAYER_ITEMS` — array of item definitions `{ name, icon, quantity, startPresent, audio }`
-- `playerInventory` — plain object mapping item name → current quantity
-- `circleRuntime` — object keyed by name: `{ def, leafletCircle, state, inRange, visited, onMap, activeGain, activeSource, playsRemaining, lockedByEnd, pendingExitActions }`
+- `circleRuntime` — object keyed by name: `{ def, leafletCircle, state, inRange, visited, onMap, activeGain, activeSource, playsRemaining, lockedByEnd, pendingExitActions, dwellTimer }`
 - `playToEndLock` — module-level variable; holds the `rt` of any currently-playing playToEnd whisper, or `null`
 - `lastKnownLatLng` — module-level `{ lat, lng }` updated on every GPS fix; used by `onPlayToEndLockReleased`, the post-initAudio scan, and the 60-second time-condition timer
 - `firstGpsFix` — boolean, true until the first `onPosition` call; triggers an immediate `checkUnlocks` pass for time-based conditions on first fix
@@ -398,6 +404,7 @@ ghost-circles/
 - `gpsLostTimer` — setTimeout handle for the 3-second debounce before confirming GPS loss; `null` when not armed
 - `overlappingCircles` — editor-only array of circle names at the last tapped map location that geometrically contain the tapped point
 - `overlappingIndex` — editor-only index of `selectedCircleName` within `overlappingCircles`
+- `dwellTimer` — per-runtime setTimeout handle while a dwell countdown is in progress; `null` at rest. Never serialised.
 - `savePlayState()` — writes visited counts, circle states, lockedByEnd flags, and inventory to localStorage; no-op when `_hauntSaveKey` is null
 - `evaluateCondition(cond)` — evaluates a single condition object; supports all types
 - `evaluateConditions(def)` — returns true if ALL unlock conditions are satisfied

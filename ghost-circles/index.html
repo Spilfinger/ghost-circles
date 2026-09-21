@@ -1106,7 +1106,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.56</div>
+  <div id="version">v3.57</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1213,6 +1213,10 @@
       <div class="prop-row">
         <span class="prop-label">Radius (m)</span>
         <input id="prop-radius" class="prop-input" type="number" min="1" />
+      </div>
+      <div class="prop-row">
+        <span class="prop-label">Dwell time (s)</span>
+        <input id="prop-dwell-time" class="prop-input" type="number" min="0" />
       </div>
       <div class="prop-row">
         <span class="prop-label">Priority</span>
@@ -1424,7 +1428,7 @@
       circleRuntime[def.name] = {
         def, leafletCircle, state, inRange: false, visited: 0, onMap,
         activeGain: null, activeSource: null, playsRemaining: 0,
-        lockedByEnd: false,
+        lockedByEnd: false, dwellTimer: null,
       };
     });
 
@@ -2127,28 +2131,63 @@
         const wasActive      = rt.state === 'active';
 
         if (shouldBeActive && !wasActive) {
-          // → active: player entered this circle and it holds the highest priority
-          rt.state = 'active';
-          rt.visited += 1;
-          rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
-          if (navigator.vibrate) navigator.vibrate(200);
-          startWhisperPlayback(rt);
-          // Apply inventory actions defined on this circle
-          if (def.inventoryActions) {
-            def.inventoryActions.forEach(action => {
-              if (action.type === 'add' || action.type === 'addItem') {
-                playerInventory[action.item] = (playerInventory[action.item] ?? 0) + 1;
-              }
-              if (action.type === 'remove' || action.type === 'removeItem') {
-                playerInventory[action.item] = Math.max(0, (playerInventory[action.item] ?? 0) - 1);
-              }
-            });
-            renderInventory();
+          const dwell = def.dwellTime ?? 0;
+          if (dwell > 0) {
+            // Dwell: only arm a new timer if one isn't already counting for this entry.
+            // The guard prevents every GPS tick from restarting the countdown while the
+            // player stands still inside the circle. A cleared timer (player re-entered)
+            // means dwellTimer is null, so a fresh countdown starts correctly.
+            if (!rt.dwellTimer) {
+              rt.dwellTimer = setTimeout(() => {
+                rt.dwellTimer = null;
+                // Guard: player must still be inside and circle still passive
+                if (rt.state !== 'passive' || !rt.inRange || !lastKnownLatLng) return;
+                // Activate the circle — same logic as the immediate path below
+                rt.state = 'active';
+                rt.visited += 1;
+                rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
+                if (navigator.vibrate) navigator.vibrate(200);
+                startWhisperPlayback(rt);
+                if (def.inventoryActions) {
+                  def.inventoryActions.forEach(action => {
+                    if (action.type === 'add' || action.type === 'addItem') {
+                      playerInventory[action.item] = (playerInventory[action.item] ?? 0) + 1;
+                    }
+                    if (action.type === 'remove' || action.type === 'removeItem') {
+                      playerInventory[action.item] = Math.max(0, (playerInventory[action.item] ?? 0) - 1);
+                    }
+                  });
+                  renderInventory();
+                }
+                // Full proximity pass so unlock cascades, Pass 4, Pass 5, and savePlayState all run
+                checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
+              }, dwell * 1000);
+            }
+          } else {
+            // → active immediately (dwellTime === 0, the default)
+            rt.state = 'active';
+            rt.visited += 1;
+            rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
+            if (navigator.vibrate) navigator.vibrate(200);
+            startWhisperPlayback(rt);
+            // Apply inventory actions defined on this circle
+            if (def.inventoryActions) {
+              def.inventoryActions.forEach(action => {
+                if (action.type === 'add' || action.type === 'addItem') {
+                  playerInventory[action.item] = (playerInventory[action.item] ?? 0) + 1;
+                }
+                if (action.type === 'remove' || action.type === 'removeItem') {
+                  playerInventory[action.item] = Math.max(0, (playerInventory[action.item] ?? 0) - 1);
+                }
+              });
+              renderInventory();
+            }
+            if (checkUnlocks(userLatLng)) anyUnlocked = true;
           }
-          if (checkUnlocks(userLatLng)) anyUnlocked = true;
         } else if (!shouldBeActive && wasActive) {
           // → passive: either the player physically exited, or a higher-priority circle
           //   became active (priority demotion). Only vibrate on physical exit.
+          if (rt.dwellTimer) { clearTimeout(rt.dwellTimer); rt.dwellTimer = null; } // defensive
           rt.state = 'passive';
           rt.leafletCircle.setStyle({ color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE });
           stopWhisperPlayback(rt);
@@ -2163,6 +2202,11 @@
               fireExitActions(rt);
             }
           }
+        } else if (!shouldBeActive && !wasActive && rt.dwellTimer) {
+          // Player exited or was priority-demoted while the dwell countdown was running.
+          // Cancel the timer silently — no activation, no vibration.
+          clearTimeout(rt.dwellTimer);
+          rt.dwellTimer = null;
         }
       });
 
@@ -3137,8 +3181,9 @@
         const rt  = circleRuntime[name];
         const def = rt.def;
         document.getElementById('prop-name').value     = def.name;
-        document.getElementById('prop-radius').value   = def.radius;
-        document.getElementById('prop-priority').value = def.priority ?? 50;
+        document.getElementById('prop-radius').value     = def.radius;
+        document.getElementById('prop-dwell-time').value = def.dwellTime ?? 0;
+        document.getElementById('prop-priority').value   = def.priority ?? 50;
         document.getElementById('prop-repeat').value   = def.repeat ?? 1;
         const isLoop = (def.repeat ?? 1) === 0;
         document.getElementById('prop-play-to-end').classList.toggle('on', def.playToEnd === true);
@@ -3270,7 +3315,7 @@
 
         const def = {
           name, lat: center.lat, lng: center.lng, radius,
-          priority: 50, visible: true, startsLocked: false, repeat: 1, playToEnd: false, lockOnEnd: false, volume: 1.0, whisper: '', conditions: [], exitActions: [],
+          priority: 50, visible: true, startsLocked: false, repeat: 1, playToEnd: false, lockOnEnd: false, volume: 1.0, whisper: '', dwellTime: 0, conditions: [], exitActions: [],
         };
         CIRCLE_DEFS.push(def);
 
@@ -3282,7 +3327,7 @@
         circleRuntime[name] = {
           def, leafletCircle, state: 'passive', inRange: false, visited: 0, onMap: true,
           activeGain: null, activeSource: null, playsRemaining: 0,
-          lockedByEnd: false,
+          lockedByEnd: false, dwellTimer: null,
         };
 
         placementActive = false;
@@ -3508,7 +3553,7 @@
           circleRuntime[def.name] = {
             def, leafletCircle, state, inRange: false, visited: 0, onMap: true,
             activeGain: null, activeSource: null, playsRemaining: 0,
-            lockedByEnd: false,
+            lockedByEnd: false, dwellTimer: null,
           };
           addEditorToCircle(def.name);
         });
@@ -3616,6 +3661,12 @@
         const rt = circleRuntime[selectedCircleName];
         rt.def.radius = r;
         rt.leafletCircle.setRadius(r);
+        saveDraftDebounced();
+      });
+
+      document.getElementById('prop-dwell-time').addEventListener('input', function () {
+        if (!selectedCircleName) return;
+        circleRuntime[selectedCircleName].def.dwellTime = Math.max(0, parseInt(this.value) || 0);
         saveDraftDebounced();
       });
 

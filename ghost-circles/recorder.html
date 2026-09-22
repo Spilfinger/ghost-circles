@@ -682,7 +682,7 @@
       setStatus('Preparing…', 'info');
 
       try {
-        const path = `audio/${name}.m4a`;
+        const path = `ghost-circles/audio/${name}.m4a`;
         const { owner, repo, token } = settings;
 
         setStatus('Checking for existing file…', 'info');
@@ -698,7 +698,7 @@
         setStatus(sha ? 'Overwriting existing file…' : 'Uploading new file…', 'info');
         await uploadFile(owner, repo, path, b64, sha, token, commitMsg);
 
-        setStatus(`✓ Uploaded audio/${name}.m4a`, 'ok');
+        setStatus(`✓ Uploaded ghost-circles/audio/${name}.m4a`, 'ok');
 
         // Clear state for next take
         filenameInput.value   = '';

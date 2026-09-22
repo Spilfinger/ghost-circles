@@ -4,7 +4,7 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.57)
+## Current State (v3.58)
 
 The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off on reload. A ↺ button in the haunt title bar lets players start over with a confirmation prompt.
 
@@ -15,6 +15,8 @@ v3.54–v3.55 improved the editor panel: circle name is now a bold headline at t
 v3.56 fixed lockConditions not evaluating immediately when a circle locks via lockOnEnd or an exit action — a new `reEvaluateLockConditions()` function runs a GPS-independent sweep after any lock event.
 
 v3.57 added dwell time: a per-circle `dwellTime` field (integer seconds, default 0) that requires the player to remain inside a circle for the specified duration before it activates. Zero is a no-op — all existing haunts are unaffected.
+
+v3.58 introduced `recorder.html`, a standalone companion app for recording and uploading `.m4a` whisper files directly from an iPhone to the GitHub repo via the GitHub Contents API.
 
 ---
 
@@ -357,6 +359,7 @@ When a `?haunt=` URL parameter is present:
 ```
 ghost-circles/
   index.html          — the entire app (engine + editor, ~3900 lines)
+  recorder.html       — standalone companion app for recording and uploading whispers (v1.0)
   manifest.json       — PWA manifest (name, icons, display mode)
   sw.js               — service worker (caching, auto-update on deploy)
   _headers            — Netlify headers (no-cache for sw.js + index.html, audio/mp4 MIME type)
@@ -442,9 +445,55 @@ ghost-circles/
 - The `whisper` field stores the **bare filename without extension** (e.g. `rain`, not `rain.m4a`)
 - The engine always fetches from `audio/<name>.m4a` at runtime
 - `whisperBuffers` is keyed by bare name for whispers and full path for item audio (e.g. `whisperBuffers['rain']`)
-- Audio files must be **uploaded manually** to the `audio/` folder in the GitHub repo
+- Audio files can be recorded and uploaded via `recorder.html`, or added manually to the `audio/` folder in the GitHub repo
 - The export modal audio checklist (HEAD requests) shows which files are present/missing before sharing
 - `gpsok.m4a` and `gpslost.m4a` are system audio files for the GPS heartbeat; they are loaded in `initAudio()` in play mode and do not appear in the export checklist
+
+---
+
+## Recorder Companion App (`recorder.html`)
+
+A standalone single-page app for recording whisper audio on an iPhone and uploading it directly to the GitHub repo. Not part of the PWA — served as a plain HTML page alongside `index.html`.
+
+### Settings
+Stored in `localStorage` under `gc-recorder-settings` as `{ token, owner, repo }`. Accessible via the ⚙️ button in the header. Opens automatically on first load when no token is configured.
+
+- **GitHub token** — personal access token with `repo` scope
+- **Repository owner** — defaults to `spilfinger`
+- **Repository name** — defaults to `ghost-circles`
+
+### Recording
+- Large circular record button — tap to start, tap again to stop
+- Uses `MediaRecorder` API with mimeType detection order: `audio/mp4;codecs=mp4a.40.2` → `audio/mp4` → `audio/webm;codecs=opus` → `audio/webm`
+- Explicit `{ mimeType: 'audio/mp4' }` passed on iOS Safari to force correct `mimeType` property (default would be `video/mp4`)
+- Output is AAC-in-fMP4, byte-compatible with `.m4a`, decodable by Web Audio API's `decodeAudioData`
+- Recording replaces the previous take silently — only one take is held in memory at a time
+
+### Playback
+- Uses Web Audio API with callback-form `decodeAudioData` (same Safari fix as main app)
+- Decoded `AudioBuffer` is cached after first decode; re-used on subsequent play taps
+- Play button toggles to "■ Stop" during playback; reverts automatically when audio ends
+
+### Upload
+1. Filename input (bare name, e.g. `rain`) — shown with `audio/rain.m4a` path preview below
+2. GET `ghost-circles/audio/{name}.m4a` to check for an existing file and retrieve its SHA
+3. Encode blob to base64 via `FileReader.readAsDataURL`, strip the `data:…;base64,` prefix
+4. PUT to `ghost-circles/audio/{name}.m4a` — includes SHA if overwriting, omits it for new files
+5. On success: status message shown, filename input cleared, recording state reset
+
+Upload path in the GitHub Contents API: `ghost-circles/audio/{name}.m4a` (i.e. the subfolder within the repo root that mirrors the deployed file structure).
+
+### Browse audio files (📂)
+- Button in the filename label row; toggles the file list open/closed
+- On first open: GET `ghost-circles/audio` directory listing via GitHub Contents API, filters to `.m4a` files, strips extensions, sorts alphabetically
+- Results cached after first fetch — list is not re-fetched on subsequent opens
+- Tapping a filename: fills the filename input with the bare name, attempts clipboard copy, shows "✓ copied" tag for 1.5 s
+- Clipboard failure (e.g. non-HTTPS context) is silently caught — the paste-to-field still works
+
+### iOS Safari notes
+- `MediaRecorder` on iOS Safari requires explicit `{ mimeType: 'audio/mp4' }` to produce an audio-only container
+- No `AudioContext` tap-to-start overlay needed — recording and playback are triggered by user gestures directly
+- `AudioContext` is created lazily on first playback tap
 
 ---
 
@@ -487,7 +536,7 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 
 ## Known Limitations
 
-- **No file upload in editor**: audio `.m4a` files must be added to the `audio/` folder in the GitHub repo manually. The export checklist will flag missing files.
+- **No file upload in editor**: audio `.m4a` files must be recorded via `recorder.html` or added to the `audio/` folder in the GitHub repo manually. The export checklist will flag missing files.
 - **No circle list panel**: circles can only be selected by tapping them on the map (with the → navigator for overlapping circles). No scrollable list view.
 - **lockedByEnd is session-only in the haunt JSON**: the flag is not serialised, but it is included in the localStorage play-state save, so it persists correctly across reloads for players.
 

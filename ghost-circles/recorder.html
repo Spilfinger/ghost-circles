@@ -183,6 +183,73 @@
       color: var(--text-dim);
     }
 
+    /* Filename label row with browse button */
+    #filename-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    #browse-btn {
+      background: none;
+      border: none;
+      font-size: 18px;
+      line-height: 1;
+      padding: 0;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      opacity: 0.7;
+    }
+
+    #browse-btn:active { opacity: 0.4; }
+
+    /* Audio file list */
+    #audio-list {
+      display: none;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow-y: auto;
+      max-height: 220px;
+      width: 100%;
+    }
+
+    #audio-list.open { display: block; }
+
+    #audio-list-loading {
+      padding: 14px;
+      font-size: 13px;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    .audio-list-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      font-family: 'Menlo', 'SF Mono', monospace;
+      font-size: 14px;
+    }
+
+    .audio-list-item:last-child { border-bottom: none; }
+    .audio-list-item:active { background: var(--border); }
+
+    .audio-list-item .copied-tag {
+      font-family: -apple-system, system-ui, sans-serif;
+      font-size: 11px;
+      color: #66bb6a;
+      opacity: 0;
+      transition: opacity 0.15s;
+      white-space: nowrap;
+      padding-left: 8px;
+    }
+
+    .audio-list-item .copied-tag.show { opacity: 1; }
+
     /* Record button */
     #record-btn {
       width: 120px;
@@ -330,10 +397,14 @@
 
   <main>
     <div id="filename-row">
-      <label class="settings-label" id="filename-label" for="filename-input">Filename</label>
+      <div id="filename-label-row">
+        <label class="settings-label" id="filename-label" for="filename-input">Filename</label>
+        <button id="browse-btn" aria-label="Browse audio files">📂</button>
+      </div>
       <input id="filename-input" type="text" placeholder="rain" autocomplete="off" spellcheck="false"
              inputmode="url" />
       <p id="filename-hint">audio/<span id="filename-preview">rain</span>.m4a</p>
+      <div id="audio-list"><p id="audio-list-loading">Loading…</p></div>
     </div>
 
     <button id="record-btn" aria-label="Record">
@@ -720,6 +791,96 @@
     filenameInput.addEventListener('input', () => {
       if (recordedBlob) {
         uploadBtn.disabled = !filenameInput.value.trim();
+      }
+    });
+
+    /* ── Browse audio files ──────────────────────────────────── */
+    const browseBtn   = document.getElementById('browse-btn');
+    const audioList   = document.getElementById('audio-list');
+    const audioListLoading = document.getElementById('audio-list-loading');
+
+    let browseOpen    = false;
+    let browseLoaded  = false;
+
+    browseBtn.addEventListener('click', async () => {
+      if (browseOpen) {
+        audioList.classList.remove('open');
+        browseOpen = false;
+        return;
+      }
+
+      audioList.classList.add('open');
+      browseOpen = true;
+
+      if (browseLoaded) return;   // already populated
+
+      // Show loading state
+      audioList.innerHTML = '<p id="audio-list-loading">Loading…</p>';
+
+      if (!settings.token) {
+        audioList.innerHTML = '<p id="audio-list-loading">No GitHub token set. Tap ⚙️ to configure.</p>';
+        return;
+      }
+
+      try {
+        const { owner, repo, token } = settings;
+        const url = `https://api.github.com/repos/${owner}/${repo}/contents/ghost-circles/audio`;
+        const resp = await fetch(url, {
+          headers: {
+            Authorization: `token ${token}`,
+            Accept: 'application/vnd.github.v3+json',
+          },
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(`GitHub ${resp.status}: ${err.message || resp.statusText}`);
+        }
+
+        const files = await resp.json();
+        const m4aFiles = files
+          .filter(f => f.type === 'file' && f.name.toLowerCase().endsWith('.m4a'))
+          .map(f => f.name.replace(/\.m4a$/i, ''))
+          .sort((a, b) => a.localeCompare(b));
+
+        if (m4aFiles.length === 0) {
+          audioList.innerHTML = '<p id="audio-list-loading">No .m4a files found.</p>';
+          return;
+        }
+
+        audioList.innerHTML = m4aFiles.map(name =>
+          `<div class="audio-list-item" data-name="${name}">` +
+          `<span>${name}</span>` +
+          `<span class="copied-tag">✓ copied</span>` +
+          `</div>`
+        ).join('');
+
+        audioList.querySelectorAll('.audio-list-item').forEach(item => {
+          item.addEventListener('click', async () => {
+            const name = item.dataset.name;
+
+            // Paste into filename field
+            filenameInput.value = name;
+            filenamePreview.textContent = name;
+            if (recordedBlob) uploadBtn.disabled = false;
+
+            // Copy to clipboard
+            try {
+              await navigator.clipboard.writeText(name);
+            } catch {
+              // Clipboard may fail on non-secure context — paste still works
+            }
+
+            // Show ✓ copied tag briefly
+            const tag = item.querySelector('.copied-tag');
+            tag.classList.add('show');
+            setTimeout(() => tag.classList.remove('show'), 1500);
+          });
+        });
+
+        browseLoaded = true;
+      } catch (err) {
+        audioList.innerHTML = `<p id="audio-list-loading">Error: ${err.message}</p>`;
       }
     });
   </script>

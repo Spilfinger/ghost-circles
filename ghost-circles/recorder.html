@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Ghost Circles — Recorder v1.0</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #000000;
+      --surface:   #1c1c1e;
+      --surface2:  #2c2c2e;
+      --border:    #3a3a3c;
+      --text:      #f2f2f7;
+      --text-dim:  #8e8e93;
+      --green:     #2e7d32;
+      --green-hi:  #43a047;
+      --red:       #c62828;
+      --red-hi:    #e53935;
+      --blue:      #1565c0;
+      --blue-hi:   #1976d2;
+      --orange:    #e65100;
+      --orange-hi: #ef6c00;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'San Francisco', system-ui, sans-serif;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    header h1 {
+      font-size: 17px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+
+    header .version {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .settings-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 22px;
+      padding: 4px 0 4px 12px;
+      cursor: pointer;
+      line-height: 1;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ── Settings panel ──────────────────────────────────────── */
+    #settings-panel {
+      display: none;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 20px;
+    }
+
+    #settings-panel.open { display: block; }
+
+    .settings-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+
+    .settings-row:last-child { margin-bottom: 0; }
+
+    .settings-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .settings-input {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 15px;
+      padding: 10px 12px;
+      font-family: inherit;
+      width: 100%;
+      -webkit-appearance: none;
+    }
+
+    .settings-input:focus {
+      outline: none;
+      border-color: var(--blue-hi);
+    }
+
+    .settings-note {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    .settings-save-btn {
+      background: var(--blue);
+      color: var(--text);
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 12px 20px;
+      width: 100%;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      margin-top: 6px;
+    }
+
+    .settings-save-btn:active { opacity: 0.75; }
+
+    /* ── Main content ────────────────────────────────────────── */
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 24px 40px;
+      gap: 28px;
+    }
+
+    /* Filename */
+    #filename-row {
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #filename-label {
+      font-size: 13px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    #filename-input {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 17px;
+      padding: 13px 14px;
+      font-family: 'Menlo', 'SF Mono', monospace;
+      width: 100%;
+      -webkit-appearance: none;
+    }
+
+    #filename-input:focus {
+      outline: none;
+      border-color: var(--blue-hi);
+    }
+
+    #filename-hint {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    /* Record button */
+    #record-btn {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      border: 4px solid var(--red-hi);
+      background: var(--red);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      -webkit-tap-highlight-color: transparent;
+      transition: transform 0.1s, opacity 0.1s;
+      user-select: none;
+      box-shadow: 0 0 0 0 rgba(229, 57, 53, 0.5);
+    }
+
+    #record-btn:active { transform: scale(0.95); }
+
+    #record-btn.recording {
+      background: var(--red-hi);
+      box-shadow: 0 0 0 12px rgba(229, 57, 53, 0.25);
+      animation: pulse-glow 1.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 0 8px rgba(229, 57, 53, 0.2); }
+      50%       { box-shadow: 0 0 0 18px rgba(229, 57, 53, 0.08); }
+    }
+
+    #record-btn .rec-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--text);
+    }
+
+    #record-btn.recording .rec-icon {
+      border-radius: 4px;
+      width: 22px;
+      height: 22px;
+    }
+
+    #record-btn .rec-label { font-size: 13px; }
+
+    /* Timer */
+    #timer {
+      font-size: 28px;
+      font-family: 'Menlo', 'SF Mono', monospace;
+      color: var(--text-dim);
+      min-width: 80px;
+      text-align: center;
+    }
+
+    #timer.active { color: var(--red-hi); }
+
+    /* Action buttons */
+    #action-row {
+      display: flex;
+      gap: 16px;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    .action-btn {
+      flex: 1;
+      padding: 14px 10px;
+      border-radius: 12px;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: opacity 0.1s;
+      color: var(--text);
+    }
+
+    .action-btn:active { opacity: 0.7; }
+    .action-btn:disabled { opacity: 0.3; cursor: default; }
+
+    #play-btn  { background: var(--surface2); border: 1px solid var(--border); }
+    #upload-btn { background: var(--green); }
+
+    #play-btn.playing { background: var(--orange); border-color: var(--orange-hi); }
+
+    /* Status */
+    #status {
+      font-size: 14px;
+      color: var(--text-dim);
+      text-align: center;
+      min-height: 20px;
+      max-width: 340px;
+      line-height: 1.4;
+    }
+
+    #status.ok    { color: #66bb6a; }
+    #status.error { color: var(--red-hi); }
+    #status.info  { color: var(--blue-hi); }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding: 16px;
+      font-size: 11px;
+      color: var(--border);
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h1>Ghost Circles — Recorder</h1>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span class="version">v1.0</span>
+      <button class="settings-btn" id="settings-toggle" aria-label="Settings">⚙️</button>
+    </div>
+  </header>
+
+  <div id="settings-panel">
+    <div class="settings-row">
+      <label class="settings-label" for="s-token">GitHub token</label>
+      <input class="settings-input" id="s-token" type="password" placeholder="ghp_…" autocomplete="off" spellcheck="false" />
+      <p class="settings-note">Needs <strong>repo</strong> scope. Stored locally on this device only.</p>
+    </div>
+    <div class="settings-row">
+      <label class="settings-label" for="s-owner">Repository owner</label>
+      <input class="settings-input" id="s-owner" type="text" placeholder="username" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="settings-row">
+      <label class="settings-label" for="s-repo">Repository name</label>
+      <input class="settings-input" id="s-repo" type="text" placeholder="ghost-circles" autocomplete="off" spellcheck="false" />
+    </div>
+    <button class="settings-save-btn" id="settings-save">Save settings</button>
+  </div>
+
+  <main>
+    <div id="filename-row">
+      <label class="settings-label" id="filename-label" for="filename-input">Filename</label>
+      <input id="filename-input" type="text" placeholder="rain" autocomplete="off" spellcheck="false"
+             inputmode="url" />
+      <p id="filename-hint">audio/<span id="filename-preview">rain</span>.m4a</p>
+    </div>
+
+    <button id="record-btn" aria-label="Record">
+      <div class="rec-icon"></div>
+      <span class="rec-label">RECORD</span>
+    </button>
+
+    <div id="timer">0:00</div>
+
+    <div id="action-row">
+      <button class="action-btn" id="play-btn" disabled>▶ Play</button>
+      <button class="action-btn" id="upload-btn" disabled>↑ Upload</button>
+    </div>
+
+    <p id="status"></p>
+  </main>
+
+  <footer>Files upload to audio/ in your GitHub repo</footer>
+
+  <script>
+    'use strict';
+
+    /* ── Settings ───────────────────────────────────────────── */
+    const SETTINGS_KEY = 'gc-recorder-settings';
+
+    function loadSettings() {
+      try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
+    }
+
+    function saveSettings(s) {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    }
+
+    let settings = loadSettings();
+
+    // Populate defaults
+    if (!settings.owner) settings.owner = 'spilfinger';
+    if (!settings.repo)  settings.repo  = 'ghost-circles';
+
+    const settingsToggle = document.getElementById('settings-toggle');
+    const settingsPanel  = document.getElementById('settings-panel');
+    const sToken  = document.getElementById('s-token');
+    const sOwner  = document.getElementById('s-owner');
+    const sRepo   = document.getElementById('s-repo');
+    const settingsSave = document.getElementById('settings-save');
+
+    function openSettings() {
+      sToken.value = settings.token || '';
+      sOwner.value = settings.owner || '';
+      sRepo.value  = settings.repo  || '';
+      settingsPanel.classList.add('open');
+    }
+
+    settingsToggle.addEventListener('click', () => {
+      if (settingsPanel.classList.contains('open')) {
+        settingsPanel.classList.remove('open');
+      } else {
+        openSettings();
+      }
+    });
+
+    settingsSave.addEventListener('click', () => {
+      settings.token = sToken.value.trim();
+      settings.owner = sOwner.value.trim();
+      settings.repo  = sRepo.value.trim();
+      saveSettings(settings);
+      settingsPanel.classList.remove('open');
+      setStatus('Settings saved.', 'ok');
+    });
+
+    // Show settings on first load if no token configured
+    if (!settings.token) openSettings();
+
+    /* ── Filename ───────────────────────────────────────────── */
+    const filenameInput   = document.getElementById('filename-input');
+    const filenamePreview = document.getElementById('filename-preview');
+
+    filenameInput.addEventListener('input', () => {
+      const val = filenameInput.value.trim() || 'rain';
+      filenamePreview.textContent = val;
+    });
+
+    function getFilename() {
+      return (filenameInput.value.trim() || '').replace(/\.m4a$/i, '');
+    }
+
+    /* ── State ──────────────────────────────────────────────── */
+    const recordBtn = document.getElementById('record-btn');
+    const recLabel  = recordBtn.querySelector('.rec-label');
+    const playBtn   = document.getElementById('play-btn');
+    const uploadBtn = document.getElementById('upload-btn');
+    const timerEl   = document.getElementById('timer');
+    const statusEl  = document.getElementById('status');
+
+    let mediaRecorder = null;
+    let chunks        = [];
+    let recordedBlob  = null;
+    let timerInterval = null;
+    let timerSecs     = 0;
+    let audioCtx      = null;
+    let playSource    = null;
+    let playBuffer    = null;
+    let isPlaying     = false;
+
+    function setStatus(msg, type = '') {
+      statusEl.textContent = msg;
+      statusEl.className   = type;
+    }
+
+    function formatTime(s) {
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `${m}:${sec.toString().padStart(2, '0')}`;
+    }
+
+    function startTimer() {
+      timerSecs = 0;
+      timerEl.textContent = formatTime(0);
+      timerEl.classList.add('active');
+      timerInterval = setInterval(() => {
+        timerSecs++;
+        timerEl.textContent = formatTime(timerSecs);
+      }, 1000);
+    }
+
+    function stopTimer() {
+      clearInterval(timerInterval);
+      timerInterval = null;
+      timerEl.classList.remove('active');
+    }
+
+    /* ── MediaRecorder ──────────────────────────────────────── */
+    function pickMimeType() {
+      const candidates = [
+        'audio/mp4;codecs=mp4a.40.2',
+        'audio/mp4',
+        'audio/webm;codecs=opus',
+        'audio/webm',
+      ];
+      for (const t of candidates) {
+        if (MediaRecorder.isTypeSupported(t)) return t;
+      }
+      return '';
+    }
+
+    async function startRecording() {
+      // Stop any playback
+      stopPlayback();
+
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch (err) {
+        setStatus('Microphone access denied. Check your browser settings.', 'error');
+        return;
+      }
+
+      const mimeType = pickMimeType();
+      const options  = mimeType ? { mimeType } : {};
+
+      try {
+        mediaRecorder = new MediaRecorder(stream, options);
+      } catch (err) {
+        setStatus('Could not start recorder: ' + err.message, 'error');
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
+
+      chunks = [];
+      recordedBlob = null;
+      playBuffer   = null;
+      playBtn.disabled   = true;
+      uploadBtn.disabled = true;
+
+      mediaRecorder.ondataavailable = e => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        const mime = mediaRecorder.mimeType || 'audio/mp4';
+        recordedBlob = new Blob(chunks, { type: mime });
+        chunks = [];
+
+        playBtn.disabled   = false;
+        uploadBtn.disabled = !getFilename();
+        setStatus(`Recorded ${formatTime(timerSecs)}. Ready to play or upload.`);
+      };
+
+      mediaRecorder.start();
+      startTimer();
+
+      recordBtn.classList.add('recording');
+      recLabel.textContent = 'STOP';
+      setStatus('Recording…', 'info');
+    }
+
+    function stopRecording() {
+      if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+      mediaRecorder.stop();
+      stopTimer();
+      recordBtn.classList.remove('recording');
+      recLabel.textContent = 'RECORD';
+    }
+
+    recordBtn.addEventListener('click', () => {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    });
+
+    /* ── Playback ───────────────────────────────────────────── */
+    function getAudioCtx() {
+      if (!audioCtx || audioCtx.state === 'closed') {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      return audioCtx;
+    }
+
+    function stopPlayback() {
+      if (playSource) {
+        try { playSource.stop(); } catch {}
+        playSource = null;
+      }
+      isPlaying = false;
+      playBtn.textContent = '▶ Play';
+      playBtn.classList.remove('playing');
+    }
+
+    playBtn.addEventListener('click', async () => {
+      if (isPlaying) {
+        stopPlayback();
+        return;
+      }
+      if (!recordedBlob) return;
+
+      setStatus('Loading…', 'info');
+
+      try {
+        const ctx = getAudioCtx();
+        if (ctx.state === 'suspended') await ctx.resume();
+
+        if (!playBuffer) {
+          const arrayBuffer = await recordedBlob.arrayBuffer();
+          playBuffer = await new Promise((res, rej) =>
+            ctx.decodeAudioData(arrayBuffer, res, rej)
+          );
+        }
+
+        playSource = ctx.createBufferSource();
+        playSource.buffer = playBuffer;
+        playSource.connect(ctx.destination);
+        playSource.onended = () => {
+          isPlaying = false;
+          playBtn.textContent = '▶ Play';
+          playBtn.classList.remove('playing');
+          setStatus('');
+        };
+        playSource.start();
+        isPlaying = true;
+        playBtn.textContent = '■ Stop';
+        playBtn.classList.add('playing');
+        setStatus('Playing…', 'info');
+      } catch (err) {
+        setStatus('Playback failed: ' + err.message, 'error');
+        stopPlayback();
+      }
+    });
+
+    /* ── Upload ─────────────────────────────────────────────── */
+    function blobToBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = () => {
+          // result is "data:audio/mp4;base64,AAAA…" — strip prefix
+          const b64 = reader.result.split(',')[1];
+          resolve(b64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    async function getFileSha(owner, repo, path, token) {
+      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+      const resp = await fetch(url, {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      });
+      if (resp.status === 404) return null;
+      if (!resp.ok) throw new Error(`GitHub GET ${resp.status}: ${resp.statusText}`);
+      const data = await resp.json();
+      return data.sha || null;
+    }
+
+    async function uploadFile(owner, repo, path, content, sha, token, commitMsg) {
+      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+      const body = { message: commitMsg, content };
+      if (sha) body.sha = sha;
+
+      const resp = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error(`GitHub PUT ${resp.status}: ${errData.message || resp.statusText}`);
+      }
+      return resp.json();
+    }
+
+    uploadBtn.addEventListener('click', async () => {
+      if (!recordedBlob) return;
+
+      const name = getFilename();
+      if (!name) {
+        setStatus('Enter a filename before uploading.', 'error');
+        filenameInput.focus();
+        return;
+      }
+
+      if (!settings.token) {
+        setStatus('No GitHub token set. Tap ⚙️ to configure.', 'error');
+        openSettings();
+        return;
+      }
+
+      if (!settings.owner || !settings.repo) {
+        setStatus('Repository owner or name missing. Tap ⚙️ to configure.', 'error');
+        openSettings();
+        return;
+      }
+
+      uploadBtn.disabled = true;
+      uploadBtn.textContent = '↑ Uploading…';
+      setStatus('Preparing…', 'info');
+
+      try {
+        const path = `audio/${name}.m4a`;
+        const { owner, repo, token } = settings;
+
+        setStatus('Checking for existing file…', 'info');
+        const sha = await getFileSha(owner, repo, path, token);
+
+        setStatus('Encoding…', 'info');
+        const b64 = await blobToBase64(recordedBlob);
+
+        const commitMsg = sha
+          ? `Update whisper: ${name}.m4a`
+          : `Add whisper: ${name}.m4a`;
+
+        setStatus(sha ? 'Overwriting existing file…' : 'Uploading new file…', 'info');
+        await uploadFile(owner, repo, path, b64, sha, token, commitMsg);
+
+        setStatus(`✓ Uploaded audio/${name}.m4a`, 'ok');
+
+        // Clear state for next take
+        filenameInput.value   = '';
+        filenamePreview.textContent = 'rain';
+        recordedBlob  = null;
+        playBuffer    = null;
+        playBtn.disabled   = true;
+        uploadBtn.disabled = true;
+        timerEl.textContent = '0:00';
+        stopPlayback();
+      } catch (err) {
+        setStatus('Upload failed: ' + err.message, 'error');
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = '↑ Upload';
+      }
+    });
+
+    /* ── Filename → upload button enable/disable ─────────────── */
+    filenameInput.addEventListener('input', () => {
+      if (recordedBlob) {
+        uploadBtn.disabled = !filenameInput.value.trim();
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1106,7 +1106,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.59</div>
+  <div id="version">v3.60</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1599,7 +1599,7 @@
       // reEvaluateLockConditions, checkUnlocks, and checkProximity in the right
       // order after lockOnEnd and exit actions have already been applied.
       Object.values(circleRuntime).forEach(crt => {
-        if (crt.state === 'active' && crt.inRange && !crt.activeGain) {
+        if (crt.state === 'active' && crt.inRange && !crt.activeGain && !crt.lockedByEnd) {
           startWhisperPlayback(crt);
         }
       });

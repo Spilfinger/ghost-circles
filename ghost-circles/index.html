@@ -1106,7 +1106,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.58</div>
+  <div id="version">v3.59</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1594,12 +1594,15 @@
     //    the lock — start its whisper now.
     // 2. Run a full proximity check so passive circles the player is inside can activate.
     function onPlayToEndLockReleased() {
+      // Start any whispers that were queued while the lock was held.
+      // checkProximity is NOT called here — callers are responsible for calling
+      // reEvaluateLockConditions, checkUnlocks, and checkProximity in the right
+      // order after lockOnEnd and exit actions have already been applied.
       Object.values(circleRuntime).forEach(crt => {
         if (crt.state === 'active' && crt.inRange && !crt.activeGain) {
           startWhisperPlayback(crt);
         }
       });
-      if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
     }
 
     // Spawn a single expanding ring at the player's current position; self-removes after 1.5 s.
@@ -1802,7 +1805,15 @@
           rt.activeSource = null;
           try { gain.disconnect(); } catch (_) {}
           if (playToEndLock === rt) { playToEndLock = null; debugLog(`playToEnd lock released: ${rt.def.whisper} (natural end)`); }
-          // Lock the circle if requested — prevents GPS wobble re-triggering the whisper
+          // Fire exit actions first — player stayed inside through natural completion.
+          // fireExitActions calls reEvaluateLockConditions internally for any exit-action locks.
+          fireExitActions(rt);
+          // Start any whispers that were queued while the playToEnd lock was held.
+          // Must happen before lockOnEnd so YES-style circles can begin playing before
+          // the countdown circle's own lockOnEnd re-locks them via their lockConditions.
+          onPlayToEndLockReleased();
+          // Lock the circle if requested — prevents GPS wobble re-triggering the whisper.
+          // Applied after queued whispers are started so they are not blocked by this lock.
           if (rt.def.lockOnEnd) {
             rt.state       = 'locked';
             rt.inRange     = false;
@@ -1810,11 +1821,14 @@
             rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
             debugLog(`lockedByEnd: ${rt.def.whisper}`);
           }
-          // Fire exit actions — player stayed inside through natural completion, lockOnEnd
-          // is the effective "exit" moment. Also fires for non-lockOnEnd circles that have
-          // exitActions and played to completion while the player was still inside.
-          fireExitActions(rt);
-          onPlayToEndLockReleased();
+          // Re-evaluate the full unlock/lock picture now that lockOnEnd has fired:
+          // reEvaluateLockConditions handles circles whose lockConditions reference the
+          // newly-locked circle (e.g. YES locks because countdown is now locked);
+          // checkUnlocks handles circles whose unlock conditions are now satisfied
+          // (e.g. NO unlocks because countdown is now locked).
+          reEvaluateLockConditions();
+          if (lastKnownLatLng) checkUnlocks(L.latLng(lastKnownLatLng.lat, lastKnownLatLng.lng));
+          if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
         }
       };
 
@@ -1841,6 +1855,16 @@
           rt.activeSource = null;
           try { gain.disconnect(); } catch (_) {}
           if (playToEndLock === rt) { playToEndLock = null; debugLog(`playToEnd lock released: ${rt.def.whisper} (exit path)`); }
+          // Fire deferred exit actions — they were held back when the player physically
+          // exited because audio was still playing (playToEnd). pendingExitActions was set
+          // at that moment; fire now that audio has naturally ended.
+          // fireExitActions calls reEvaluateLockConditions internally for any exit-action locks.
+          if (rt.pendingExitActions) fireExitActions(rt);
+          // Start any whispers that were queued while the playToEnd lock was held.
+          // Must happen before lockOnEnd so YES-style circles can begin playing before
+          // the countdown circle's own lockOnEnd re-locks them via their lockConditions.
+          onPlayToEndLockReleased();
+          // Lock the circle if requested — applied after queued whispers are started.
           if (rt.def.lockOnEnd) {
             rt.state       = 'locked';
             rt.inRange     = false;
@@ -1848,14 +1872,10 @@
             rt.leafletCircle.setStyle({ color: COLOR_LOCKED, fillColor: COLOR_LOCKED });
             debugLog(`lockedByEnd: ${rt.def.whisper}`);
           }
-          // Fire deferred exit actions — they were held back when the player physically
-          // exited because audio was still playing (playToEnd). pendingExitActions was set
-          // at that moment; fire now that audio has naturally ended.
-          if (rt.pendingExitActions) fireExitActions(rt);
-          // Re-evaluate lockConditions for lockOnEnd circles with no exit actions — if
-          // fireExitActions was not called above, reEvaluateLockConditions won't have run yet.
-          else if (rt.def.lockOnEnd) reEvaluateLockConditions();
-          onPlayToEndLockReleased();
+          // Re-evaluate the full unlock/lock picture now that lockOnEnd has fired.
+          reEvaluateLockConditions();
+          if (lastKnownLatLng) checkUnlocks(L.latLng(lastKnownLatLng.lat, lastKnownLatLng.lng));
+          if (lastKnownLatLng) checkProximity(lastKnownLatLng.lat, lastKnownLatLng.lng);
         };
         return;
       }

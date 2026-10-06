@@ -1106,7 +1106,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.60</div>
+  <div id="version">v3.61</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1593,13 +1593,15 @@
     // 1. Any circle that is already active+inRange but has no audio playing was blocked by
     //    the lock — start its whisper now.
     // 2. Run a full proximity check so passive circles the player is inside can activate.
-    function onPlayToEndLockReleased() {
+    function onPlayToEndLockReleased(rt) {
       // Start any whispers that were queued while the lock was held.
+      // Skip rt itself — it is the circle that just triggered the release and must
+      // not be re-started regardless of its flag state at the moment of this scan.
       // checkProximity is NOT called here — callers are responsible for calling
       // reEvaluateLockConditions, checkUnlocks, and checkProximity in the right
       // order after lockOnEnd and exit actions have already been applied.
       Object.values(circleRuntime).forEach(crt => {
-        if (crt.state === 'active' && crt.inRange && !crt.activeGain && !crt.lockedByEnd) {
+        if (crt !== rt && crt.state === 'active' && crt.inRange && !crt.activeGain && !crt.lockedByEnd) {
           startWhisperPlayback(crt);
         }
       });
@@ -1811,7 +1813,7 @@
           // Start any whispers that were queued while the playToEnd lock was held.
           // Must happen before lockOnEnd so YES-style circles can begin playing before
           // the countdown circle's own lockOnEnd re-locks them via their lockConditions.
-          onPlayToEndLockReleased();
+          onPlayToEndLockReleased(rt);
           // Lock the circle if requested — prevents GPS wobble re-triggering the whisper.
           // Applied after queued whispers are started so they are not blocked by this lock.
           if (rt.def.lockOnEnd) {
@@ -1863,7 +1865,7 @@
           // Start any whispers that were queued while the playToEnd lock was held.
           // Must happen before lockOnEnd so YES-style circles can begin playing before
           // the countdown circle's own lockOnEnd re-locks them via their lockConditions.
-          onPlayToEndLockReleased();
+          onPlayToEndLockReleased(rt);
           // Lock the circle if requested — applied after queued whispers are started.
           if (rt.def.lockOnEnd) {
             rt.state       = 'locked';

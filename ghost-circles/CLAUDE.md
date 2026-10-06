@@ -4,7 +4,7 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.58)
+## Current State (v3.61)
 
 The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off on reload. A ↺ button in the haunt title bar lets players start over with a confirmation prompt.
 
@@ -17,6 +17,10 @@ v3.56 fixed lockConditions not evaluating immediately when a circle locks via lo
 v3.57 added dwell time: a per-circle `dwellTime` field (integer seconds, default 0) that requires the player to remain inside a circle for the specified duration before it activates. Zero is a no-op — all existing haunts are unaffected.
 
 v3.58 introduced `recorder.html`, a standalone companion app for recording and uploading `.m4a` whisper files directly from an iPhone to the GitHub repo via the GitHub Contents API.
+
+v3.59 fixed two sequencing bugs involving `playToEnd` + `lockOnEnd`. The correct order of operations when a playToEnd audio ends naturally is now: (1) release `playToEndLock`, (2) `fireExitActions`, (3) `onPlayToEndLockReleased` — starts queued whispers before lockOnEnd fires, (4) apply `lockOnEnd`, (5) `reEvaluateLockConditions`, (6) `checkUnlocks(lastKnownLatLng)`, (7) `checkProximity`. This fixed two bugs: a YES-type circle (unlocks when countdown is active, locks when countdown is locked) now gets its whisper started before lockOnEnd locks it via its lockCondition; and a NO-type circle (unlocks when countdown is locked) now unlocks immediately when lockOnEnd fires rather than waiting for the next GPS tick. Both `playNextInSequence` natural completion and `stopWhisperPlayback` exit-path `onended` use this sequence. `onPlayToEndLockReleased` no longer calls `checkProximity` internally — callers are responsible for the full sequence.
+
+v3.60–v3.61 fixed a double-play bug introduced by v3.59: when a circle with `playToEnd` + `lockOnEnd` completed naturally while the player was still inside, `onPlayToEndLockReleased` would re-start that circle's whisper because its `lockedByEnd` flag had not been set yet at the moment of the scan (lockOnEnd runs after the scan). Fixed by passing `rt` as a parameter to `onPlayToEndLockReleased(rt)` and excluding `rt` from the scan by object identity (`crt !== rt`).
 
 ---
 
@@ -123,9 +127,16 @@ Circle-to-circle unlock/lock/show/hide actions are also authored in the "When vi
 If a player is already standing inside a circle when it unlocks, it activates immediately — no need to exit and re-enter. `checkProximity` re-runs recursively on unlock.
 
 ### playToEnd lock release
-When the `playToEndLock` releases (audio ends naturally in either the stayed-inside or walked-out path), `onPlayToEndLockReleased()` runs:
-1. Scans all `circleRuntime` entries for circles that are `active + inRange + activeGain === null` — circles that were promoted while the lock was held but whose whispers were blocked. Calls `startWhisperPlayback` on each immediately.
-2. Calls `checkProximity` with `lastKnownLatLng` to handle any passive circles the player is currently inside.
+When the `playToEndLock` releases (audio ends naturally in either the stayed-inside or walked-out path), the full sequence is:
+1. Release `playToEndLock`.
+2. `fireExitActions(rt)` — fires exit actions (or deferred exit actions in the walked-out path); calls `reEvaluateLockConditions` internally.
+3. `onPlayToEndLockReleased(rt)` — scans all `circleRuntime` entries for circles that are `active + inRange + activeGain === null + not rt` and calls `startWhisperPlayback` on each. Excludes `rt` by identity so the just-completed circle is never re-started. Does **not** call `checkProximity`.
+4. Apply `lockOnEnd` to `rt` if set.
+5. `reEvaluateLockConditions()` — re-locks any circles whose lockConditions are now satisfied (e.g. a circle that locks when `rt` is locked).
+6. `checkUnlocks(lastKnownLatLng)` — unlocks any circles whose conditions are now satisfied (e.g. a circle that unlocks when `rt` is locked).
+7. `checkProximity(lastKnownLatLng)` — activates any newly-passive circles the player is standing inside.
+
+Steps 3 and 4 are deliberately ordered so queued whispers start before `lockOnEnd` fires. This prevents `lockOnEnd`-triggered lockConditions on other circles from blocking their whispers.
 
 ### Start inside a circle
 After `initAudio()` resolves (Tap to Start), the `.then()` handler scans all `circleRuntime` entries for `active + inRange + activeGain === null` and calls `startWhisperPlayback` on each — handles circles that became active during GPS/audio initialisation before buffers were loaded.
@@ -415,12 +426,12 @@ ghost-circles/
 - `computeVisibility(def)` — returns whether a circle should currently be on the map
 - `checkUnlocks(userLatLng)` — promotes locked circles whose conditions are met; skips `lockedByEnd` circles unconditionally; returns true if anything promoted
 - `checkProximity(lat, lng)` — five-pass algorithm: (1) update inRange → (2) find maxPriority → (3) resolve transitions + inventoryActions + checkUnlocks + exitActions → recurse if unlocks → (4) re-lock/re-unlock (skips lockedByEnd) → (5) update dynamic map visibility
-- `reEvaluateLockConditions()` — GPS-independent sweep: locks all passive/active circles whose `lockConditions` are currently met; loops until stable so lock chains resolve in one call (A locks → B's isLocked(A) fires → B locks → …). Called from `fireExitActions` and from `stopWhisperPlayback`'s onended when lockOnEnd fires with no pending exit actions.
+- `reEvaluateLockConditions()` — GPS-independent sweep: locks all passive/active circles whose `lockConditions` are currently met; loops until stable so lock chains resolve in one call (A locks → B's isLocked(A) fires → B locks → …). Called from `fireExitActions` and from both natural-completion `onended` handlers after lockOnEnd is applied.
 - `startWhisperPlayback(rt)` — checks playToEndLock, claims it if playToEnd, starts audio per repeat setting
-- `playNextInSequence(rt, gain)` — chains sequential plays via `onended`; on natural completion fires lockOnEnd, `fireExitActions`, then `onPlayToEndLockReleased`
-- `stopWhisperPlayback(rt)` — if playToEnd: lets audio run to end, sets `pendingExitActions` flag on exit, fires `fireExitActions` then `onPlayToEndLockReleased` in onended; otherwise fades over 1s and stops
+- `playNextInSequence(rt, gain)` — chains sequential plays via `onended`; on natural completion: releases lock, fires `fireExitActions`, calls `onPlayToEndLockReleased(rt)`, applies lockOnEnd, then calls `reEvaluateLockConditions` + `checkUnlocks` + `checkProximity`
+- `stopWhisperPlayback(rt)` — if playToEnd: lets audio run to end, sets `pendingExitActions` flag on exit; in `onended`: releases lock, fires deferred `fireExitActions`, calls `onPlayToEndLockReleased(rt)`, applies lockOnEnd, then calls `reEvaluateLockConditions` + `checkUnlocks` + `checkProximity`; otherwise fades over 1s and stops
 - `fireExitActions(rt)` — executes all `exitActions` on the circle's def; handles lock/unlock/show/hide/addItem/removeItem; resets `rt.pendingExitActions`; calls `reEvaluateLockConditions()` at the end
-- `onPlayToEndLockReleased()` — scans circleRuntime for active+inRange+silent circles and starts their whispers; then calls checkProximity for any remaining passive circles
+- `onPlayToEndLockReleased(rt)` — scans circleRuntime for active+inRange+silent circles (excluding `rt` by identity) and starts their whispers; does not call `checkProximity` — callers handle the full post-lockOnEnd sequence
 - `spawnPulseRing()` — creates a Leaflet DivIcon marker at the player's current position with a `.gps-pulse-ring` CSS animation; self-removes after 1.5 s (play mode only)
 - `playHeartbeatPulse()` — plays `gpsok.m4a` at volume 0.3 and spawns two pulse rings 1 second apart; no-op if a priority-20+ whisper is active (play mode only)
 - `startHeartbeat()` / `stopHeartbeat()` — start/stop the 10-second heartbeat interval; `startHeartbeat` fires an immediate pulse on call (play mode only)

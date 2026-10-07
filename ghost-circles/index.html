@@ -122,20 +122,21 @@
     }
 
     .start-btn {
-      display: block;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       color: #fff;
       background: transparent;
       border: 2px solid rgba(255,255,255,0.6);
-      border-radius: 4px;
+      border-radius: 50%;
       font-family: system-ui, sans-serif;
       font-size: 16px;
       font-weight: 700;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      padding: 14px 40px;
-      margin: 10px 0;
+      letter-spacing: 0.06em;
+      width: 140px;
+      height: 140px;
+      margin: 12px 0;
       cursor: pointer;
-      min-width: 200px;
       -webkit-tap-highlight-color: transparent;
     }
 
@@ -1141,7 +1142,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.62</div>
+  <div id="version">v3.63</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->

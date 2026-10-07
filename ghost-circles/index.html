@@ -121,10 +121,17 @@
       line-height: 1.25;
     }
 
+    #start-btn-group {
+      position: relative;
+      width: 240px;
+      height: 245px;
+    }
+
     .start-btn {
       display: flex;
       align-items: center;
       justify-content: center;
+      position: absolute;
       color: #fff;
       background: transparent;
       border: 2px solid rgba(255,255,255,0.6);
@@ -135,10 +142,12 @@
       letter-spacing: 0.06em;
       width: 140px;
       height: 140px;
-      margin: 12px 0;
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
     }
+
+    #start-new-game-btn { left: 10px;  top: 105px; }
+    #start-resume-btn   { left: 100px; top: 5px;   }
 
     .start-btn:active {
       background: rgba(255,255,255,0.15);
@@ -1142,14 +1151,16 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.63</div>
+  <div id="version">v3.64</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
     <div id="start-haunt-title"></div>
-    <button id="start-new-game-btn" class="start-btn" style="display:none">New Game</button>
-    <button id="start-resume-btn"   class="start-btn" style="display:none">Resume</button>
+    <div id="start-btn-group">
+      <button id="start-new-game-btn" class="start-btn" style="display:none">New Game</button>
+      <button id="start-resume-btn"   class="start-btn" style="display:none">Resume</button>
+    </div>
     <span id="start-tap-hint">Tap to Start</span>
   </div>
 
@@ -2122,10 +2133,10 @@
 
         titleEl.textContent      = document.getElementById('haunt-title-text').textContent;
         tapHint.style.display    = 'none';
-        newBtn.style.display     = 'block';
+        newBtn.style.display     = 'flex';
         overlay.style.cursor     = 'default';
 
-        if (_pendingSave) resumeBtn.style.display = 'block';
+        if (_pendingSave) resumeBtn.style.display = 'flex';
 
         newBtn.addEventListener('click', () => {
           localStorage.removeItem(_hauntSaveKey);

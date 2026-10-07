@@ -92,6 +92,7 @@
       inset: 0;
       background: #000;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       z-index: 9999;
@@ -106,6 +107,40 @@
       letter-spacing: 0.12em;
       text-transform: uppercase;
       opacity: 0.85;
+    }
+
+    #start-haunt-title {
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-align: center;
+      padding: 0 32px;
+      margin-bottom: 48px;
+      line-height: 1.25;
+    }
+
+    .start-btn {
+      display: block;
+      color: #fff;
+      background: transparent;
+      border: 2px solid rgba(255,255,255,0.6);
+      border-radius: 4px;
+      font-family: system-ui, sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 14px 40px;
+      margin: 10px 0;
+      cursor: pointer;
+      min-width: 200px;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .start-btn:active {
+      background: rgba(255,255,255,0.15);
     }
 
     /* GPS heartbeat — visual pulse ring on the player dot (play mode only) */
@@ -1106,12 +1141,15 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.61</div>
+  <div id="version">v3.62</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
   <div id="start-overlay">
-    <span>Tap to Start</span>
+    <div id="start-haunt-title"></div>
+    <button id="start-new-game-btn" class="start-btn" style="display:none">New Game</button>
+    <button id="start-resume-btn"   class="start-btn" style="display:none">Resume</button>
+    <span id="start-tap-hint">Tap to Start</span>
   </div>
 
   <!-- Editor mode UI — shown via body.editor CSS class when ?editor=true -->
@@ -1432,29 +1470,33 @@
       };
     });
 
-    // Restore saved play state (play mode only). Applied after circleRuntime is built
-    // so all runtime objects exist. Active is restored as passive — the engine will
-    // re-activate on the first GPS tick if the player is still inside, which avoids
-    // spurious exit-action firing if they've since moved away.
+    // Parse saved play state (play mode only). Not applied yet — deferred to the
+    // start screen so NEW GAME can skip it and RESUME can apply it on tap.
+    // Active is restored as passive — the engine re-activates on the first GPS tick
+    // if the player is still inside, avoiding spurious exit-action firing.
+    let _pendingSave = null;
     if (_hauntSaveKey) {
       try {
         const _savedJson = localStorage.getItem(_hauntSaveKey);
-        if (_savedJson) {
-          const _save = JSON.parse(_savedJson);
-          CIRCLE_DEFS.forEach(def => {
-            const rt = circleRuntime[def.name];
-            if (!rt) return;
-            if (_save.visited?.[def.name] !== undefined) rt.visited = _save.visited[def.name];
-            if (_save.lockedByEnd?.[def.name])           rt.lockedByEnd = true;
-            if (_save.states?.[def.name]) {
-              rt.state = _save.states[def.name] === 'locked' ? 'locked' : 'passive';
-              const color = rt.state === 'locked' ? COLOR_LOCKED : COLOR_PASSIVE;
-              rt.leafletCircle.setStyle({ color, fillColor: color });
-            }
-          });
-          if (_save.inventory) Object.assign(playerInventory, _save.inventory);
+        if (_savedJson) _pendingSave = JSON.parse(_savedJson);
+      } catch(e) { /* malformed save — treat as no save */ }
+    }
+
+    // Apply a parsed save snapshot to circleRuntime and playerInventory.
+    function applyPlayState() {
+      if (!_pendingSave) return;
+      CIRCLE_DEFS.forEach(def => {
+        const rt = circleRuntime[def.name];
+        if (!rt) return;
+        if (_pendingSave.visited?.[def.name] !== undefined) rt.visited = _pendingSave.visited[def.name];
+        if (_pendingSave.lockedByEnd?.[def.name])           rt.lockedByEnd = true;
+        if (_pendingSave.states?.[def.name]) {
+          rt.state = _pendingSave.states[def.name] === 'locked' ? 'locked' : 'passive';
+          const color = rt.state === 'locked' ? COLOR_LOCKED : COLOR_PASSIVE;
+          rt.leafletCircle.setStyle({ color, fillColor: color });
         }
-      } catch(e) { /* malformed save — ignore and start fresh */ }
+      });
+      if (_pendingSave.inventory) Object.assign(playerInventory, _pendingSave.inventory);
     }
 
     // Evaluate a single condition object. Used by both evaluateConditions and
@@ -2044,29 +2086,60 @@
       renderDebug();
     });
 
-    // --- Tap to start: unlock audio + begin GPS + wake lock ---
-    document.getElementById('start-overlay').addEventListener('click', function () {
-      this.remove();
-      // Start GPS immediately — never let audio init block it
-      startTracking();
-      // Init audio in parallel; errors are silenced so GPS is unaffected.
-      // After init, immediately check proximity in case the player is already inside a
-      // circle — activates and plays the whisper without requiring exit+re-entry.
-      initAudio().then(() => {
-        // Directly start whispers for any circles that became active while buffers were
-        // loading (GPS fired before initAudio resolved). checkProximity won't re-trigger
-        // them because they're already in the active state.
-        Object.values(circleRuntime).forEach(crt => {
-          if (crt.state === 'active' && crt.inRange && !crt.activeGain) {
-            startWhisperPlayback(crt);
-          }
+    // --- Start screen: unlock audio + begin GPS + wake lock ---
+    // In haunt play mode the overlay shows the haunt title and NEW GAME / RESUME buttons.
+    // In non-haunt or editor mode the overlay remains a plain full-screen tap target.
+    (function () {
+      const overlay = document.getElementById('start-overlay');
+
+      function doStart() {
+        overlay.remove();
+        // Start GPS immediately — never let audio init block it
+        startTracking();
+        // Init audio in parallel; errors are silenced so GPS is unaffected.
+        // After init, immediately start whispers for any circles that became active while
+        // buffers were loading (GPS fired before initAudio resolved).
+        initAudio().then(() => {
+          Object.values(circleRuntime).forEach(crt => {
+            if (crt.state === 'active' && crt.inRange && !crt.activeGain) {
+              startWhisperPlayback(crt);
+            }
+          });
+          // Begin GPS heartbeat pulse (play mode only)
+          if (!EDITOR_MODE) startHeartbeat();
+        }).catch(() => {});
+        // Request wake lock to keep screen on during play
+        requestWakeLock();
+      }
+
+      if (_hauntSaveKey) {
+        // Haunt play mode: configure the proper start screen
+        const titleEl   = document.getElementById('start-haunt-title');
+        const newBtn    = document.getElementById('start-new-game-btn');
+        const resumeBtn = document.getElementById('start-resume-btn');
+        const tapHint   = document.getElementById('start-tap-hint');
+
+        titleEl.textContent      = document.getElementById('haunt-title-text').textContent;
+        tapHint.style.display    = 'none';
+        newBtn.style.display     = 'block';
+        overlay.style.cursor     = 'default';
+
+        if (_pendingSave) resumeBtn.style.display = 'block';
+
+        newBtn.addEventListener('click', () => {
+          localStorage.removeItem(_hauntSaveKey);
+          doStart();
         });
-        // Begin GPS heartbeat pulse (play mode only)
-        if (!EDITOR_MODE) startHeartbeat();
-      }).catch(() => {});
-      // Request wake lock to keep screen on during play
-      requestWakeLock();
-    });
+        resumeBtn.addEventListener('click', () => {
+          applyPlayState();
+          renderInventory();
+          doStart();
+        });
+      } else {
+        // Non-haunt mode: plain full-screen tap target
+        overlay.addEventListener('click', doStart);
+      }
+    })();
 
     // --- GPS tracking ---
     let playerMarker  = null;

@@ -4,9 +4,9 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.61)
+## Current State (v3.66)
 
-The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off on reload. A ↺ button in the haunt title bar lets players start over with a confirmation prompt.
+The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off via the RESUME button on the start screen. A ↺ button in the haunt title bar lets players start over with a confirmation prompt.
 
 v3.52–v3.53 added a GPS heartbeat system (play mode only): a quiet audio pulse every 10 seconds with a double ripple CSS animation on the player dot, a GPS-lost warning after 3 seconds of signal dropout, and automatic heartbeat resume on recovery.
 
@@ -21,6 +21,12 @@ v3.58 introduced `recorder.html`, a standalone companion app for recording and u
 v3.59 fixed two sequencing bugs involving `playToEnd` + `lockOnEnd`. The correct order of operations when a playToEnd audio ends naturally is now: (1) release `playToEndLock`, (2) `fireExitActions`, (3) `onPlayToEndLockReleased` — starts queued whispers before lockOnEnd fires, (4) apply `lockOnEnd`, (5) `reEvaluateLockConditions`, (6) `checkUnlocks(lastKnownLatLng)`, (7) `checkProximity`. This fixed two bugs: a YES-type circle (unlocks when countdown is active, locks when countdown is locked) now gets its whisper started before lockOnEnd locks it via its lockCondition; and a NO-type circle (unlocks when countdown is locked) now unlocks immediately when lockOnEnd fires rather than waiting for the next GPS tick. Both `playNextInSequence` natural completion and `stopWhisperPlayback` exit-path `onended` use this sequence. `onPlayToEndLockReleased` no longer calls `checkProximity` internally — callers are responsible for the full sequence.
 
 v3.60–v3.61 fixed a double-play bug introduced by v3.59: when a circle with `playToEnd` + `lockOnEnd` completed naturally while the player was still inside, `onPlayToEndLockReleased` would re-start that circle's whisper because its `lockedByEnd` flag had not been set yet at the moment of the scan (lockOnEnd runs after the scan). Fixed by passing `rt` as a parameter to `onPlayToEndLockReleased(rt)` and excluding `rt` from the scan by object identity (`crt !== rt`).
+
+v3.62–v3.64 replaced the plain "Tap to Start" overlay in play mode with a proper start screen. When a haunt is loaded the overlay shows the haunt title prominently, with "New Game" and "Resume" buttons below it (Resume only shown when a save exists for that haunt ID). Both buttons satisfy the iOS audio unlock gesture requirement — no separate tap needed. New Game clears any existing localStorage save and starts fresh; Resume applies the saved state then starts. Editor mode and non-haunt mode are unchanged. Save application is now deferred: the save is parsed at load time into `_pendingSave` and applied to `circleRuntime` only when Resume is tapped; New Game discards it. `applyPlayState()` is the function that applies `_pendingSave`. The buttons are styled as circles (`border-radius: 50%`, 140×140px) and positioned in a Venn diagram composition — New Game lower-left, Resume upper-right, with centers ~134px apart so the circles just barely overlap (~6px).
+
+v3.65 fixed a circle placement offset bug in the editor. The `#placement-preview` container holds the crosshair circle and a coordinate readout below it in a flex column. The previous CSS used `transform: translate(-50%, -50%)` which centered the entire container (circle + readout, ~198px tall) at the viewport midpoint — placing the crosshair's center ~19px above the true map center. `map.getCenter()` returns the viewport midpoint, so confirmed placements landed that distance south of the crosshair. Fixed by changing to `top: calc(50% - 80px)` (80px = half the circle's 160px height), which anchors the circle's center exactly at the viewport midpoint regardless of the readout's height.
+
+v3.66 added `user-scalable=no` and `maximum-scale=1` to the viewport meta tag. This prevents iOS Safari from zooming the entire browser page when the user pinches, which was causing editor UI elements to be pushed off screen. Leaflet intercepts pinch gestures on the map element before they reach the browser, so its own pinch-to-zoom continues to work normally.
 
 ---
 
@@ -162,7 +168,7 @@ Play state is automatically saved to `localStorage` after every `checkProximity`
 - `lockedByEnd` — per-circle flag so circles locked by `lockOnEnd` or an exit-action `lock` stay locked across sessions
 - `inventory` — current quantity per item
 
-On load, the save is applied after `circleRuntime` is built but before GPS starts (`_hauntSaveKey` is set inside the haunt URL loading block). `savePlayState()` guards with `if (!_hauntSaveKey) return` so it is a complete no-op in editor mode.
+On load, the save JSON is parsed into `_pendingSave` after `circleRuntime` is built but not yet applied. Application is deferred to the start screen: RESUME calls `applyPlayState()` which writes the snapshot into `circleRuntime` and `playerInventory`; NEW GAME discards `_pendingSave` and clears localStorage. `savePlayState()` guards with `if (!_hauntSaveKey) return` so it is a complete no-op in editor mode.
 
 **Start Over button (↺)** — shown in the haunt title bar (right side, white, `pointer-events: auto` while the bar itself keeps `pointer-events: none`). Tap → `window.confirm` → on confirm: `localStorage.removeItem(saveKey)`, then `_hauntSaveKey = null` (prevents any in-flight GPS tick from re-saving before the reload completes), then `window.location.reload()`.
 
@@ -413,6 +419,7 @@ ghost-circles/
 - `lastKnownLatLng` — module-level `{ lat, lng }` updated on every GPS fix; used by `onPlayToEndLockReleased`, the post-initAudio scan, and the 60-second time-condition timer
 - `firstGpsFix` — boolean, true until the first `onPosition` call; triggers an immediate `checkUnlocks` pass for time-based conditions on first fix
 - `_hauntSaveKey` — `ghost-circles-save-<hauntId>` in play mode, `null` in editor mode; guards `savePlayState()` and the Start Over handler
+- `_pendingSave` — parsed save JSON (or `null`); populated at load time, applied to `circleRuntime` only when RESUME is tapped via `applyPlayState()`
 - `heartbeatInterval` — setInterval handle for the 10-second GPS heartbeat pulse; `null` when stopped (play mode only)
 - `gpsWasStale` — boolean tracking the previous staleness state; used to detect GPS lost/recovered transitions
 - `gpsLostTimer` — setTimeout handle for the 3-second debounce before confirming GPS loss; `null` when not armed
@@ -420,6 +427,7 @@ ghost-circles/
 - `overlappingIndex` — editor-only index of `selectedCircleName` within `overlappingCircles`
 - `dwellTimer` — per-runtime setTimeout handle while a dwell countdown is in progress; `null` at rest. Never serialised.
 - `savePlayState()` — writes visited counts, circle states, lockedByEnd flags, and inventory to localStorage; no-op when `_hauntSaveKey` is null
+- `applyPlayState()` — applies `_pendingSave` to `circleRuntime` and `playerInventory`; no-op when `_pendingSave` is null; called from the RESUME button handler
 - `evaluateCondition(cond)` — evaluates a single condition object; supports all types
 - `evaluateConditions(def)` — returns true if ALL unlock conditions are satisfied
 - `evaluateLockConditions(def)` — returns true if ANY lock condition is met

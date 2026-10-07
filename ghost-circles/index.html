@@ -348,8 +348,8 @@
     #placement-preview {
       display: none; /* flex during placement mode */
       position: fixed;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
+      top: calc(50% - 80px); left: 50%; /* 80px = half circle height; anchors circle centre at viewport centre */
+      transform: translateX(-50%);
       z-index: 1001;
       pointer-events: none;
       flex-direction: column;
@@ -1151,7 +1151,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.64</div>
+  <div id="version">v3.65</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->

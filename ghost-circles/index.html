@@ -1151,7 +1151,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.68</div>
+  <div id="version">v3.69</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -3429,10 +3429,11 @@
         const sourceDef  = circleRuntime[sourceName].def;
         const center     = map.getCenter();
 
-        // Generate a unique name: sourceName + "-1", "-2", etc.
+        // Generate a unique name: strip any trailing "-N" from sourceName, then append "-1", "-2", etc.
+        const baseName = sourceName.replace(/-\d+$/, '');
         let suffix = 1;
-        while (CIRCLE_DEFS.find(d => d.name === `${sourceName}-${suffix}`)) suffix++;
-        const newName = `${sourceName}-${suffix}`;
+        while (CIRCLE_DEFS.find(d => d.name === `${baseName}-${suffix}`)) suffix++;
+        const newName = `${baseName}-${suffix}`;
 
         // Deep-copy all def fields, override name and position
         const def = Object.assign({}, sourceDef, {

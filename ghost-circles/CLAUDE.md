@@ -4,9 +4,9 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.66)
+## Current State (v3.69)
 
-The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off via the RESUME button on the start screen. A ↺ button in the haunt title bar lets players start over with a confirmation prompt.
+The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off via the Continue button on the start screen. A ↺ button in the haunt title bar lets players start over with a confirmation prompt.
 
 v3.52–v3.53 added a GPS heartbeat system (play mode only): a quiet audio pulse every 10 seconds with a double ripple CSS animation on the player dot, a GPS-lost warning after 3 seconds of signal dropout, and automatic heartbeat resume on recovery.
 
@@ -22,11 +22,17 @@ v3.59 fixed two sequencing bugs involving `playToEnd` + `lockOnEnd`. The correct
 
 v3.60–v3.61 fixed a double-play bug introduced by v3.59: when a circle with `playToEnd` + `lockOnEnd` completed naturally while the player was still inside, `onPlayToEndLockReleased` would re-start that circle's whisper because its `lockedByEnd` flag had not been set yet at the moment of the scan (lockOnEnd runs after the scan). Fixed by passing `rt` as a parameter to `onPlayToEndLockReleased(rt)` and excluding `rt` from the scan by object identity (`crt !== rt`).
 
-v3.62–v3.64 replaced the plain "Tap to Start" overlay in play mode with a proper start screen. When a haunt is loaded the overlay shows the haunt title prominently, with "New Game" and "Resume" buttons below it (Resume only shown when a save exists for that haunt ID). Both buttons satisfy the iOS audio unlock gesture requirement — no separate tap needed. New Game clears any existing localStorage save and starts fresh; Resume applies the saved state then starts. Editor mode and non-haunt mode are unchanged. Save application is now deferred: the save is parsed at load time into `_pendingSave` and applied to `circleRuntime` only when Resume is tapped; New Game discards it. `applyPlayState()` is the function that applies `_pendingSave`. The buttons are styled as circles (`border-radius: 50%`, 140×140px) and positioned in a Venn diagram composition — New Game lower-left, Resume upper-right, with centers ~134px apart so the circles just barely overlap (~6px).
+v3.62–v3.64 replaced the plain "Tap to Start" overlay in play mode with a proper start screen. When a haunt is loaded the overlay shows the haunt title prominently, with "Begin" and "Continue" buttons below it (Continue only shown when a save exists for that haunt ID). Both buttons satisfy the iOS audio unlock gesture requirement — no separate tap needed. Begin clears any existing localStorage save and starts fresh; Continue applies the saved state then starts. Editor mode and non-haunt mode are unchanged. Save application is now deferred: the save is parsed at load time into `_pendingSave` and applied to `circleRuntime` only when Continue is tapped; Begin discards it. `applyPlayState()` is the function that applies `_pendingSave`. The buttons are styled as circles (`border-radius: 50%`, 140×140px) and positioned in a Venn diagram composition — Begin lower-left, Continue upper-right, with centers ~134px apart so the circles just barely overlap (~6px).
 
 v3.65 fixed a circle placement offset bug in the editor. The `#placement-preview` container holds the crosshair circle and a coordinate readout below it in a flex column. The previous CSS used `transform: translate(-50%, -50%)` which centered the entire container (circle + readout, ~198px tall) at the viewport midpoint — placing the crosshair's center ~19px above the true map center. `map.getCenter()` returns the viewport midpoint, so confirmed placements landed that distance south of the crosshair. Fixed by changing to `top: calc(50% - 80px)` (80px = half the circle's 160px height), which anchors the circle's center exactly at the viewport midpoint regardless of the readout's height.
 
 v3.66 added `user-scalable=no` and `maximum-scale=1` to the viewport meta tag. This prevents iOS Safari from zooming the entire browser page when the user pinches, which was causing editor UI elements to be pushed off screen. Leaflet intercepts pinch gestures on the map element before they reach the browser, so its own pinch-to-zoom continues to work normally.
+
+v3.67 renamed the start screen buttons from "New Game"/"Resume" to "Begin"/"Continue" — neutral labels that work for game and non-game haunts alike.
+
+v3.68 added a **Duplicate** button to the circle properties panel, placed directly beneath the Reposition button. Tapping it starts the same placement flow as Reposition — a draggable circle of the same size appears for positioning — but the original circle stays in place. On confirm, a new circle is created as a deep copy of all properties (conditions, actions, arrays all cloned), with the name auto-incremented: the base name is derived by stripping any trailing `-N` suffix from the source name, then appending `-1`, `-2`, `-3` etc. until the name is unique. The properties panel switches to show the new copy. Uses the shared reposition-bar (Confirm position / Cancel); the confirm and cancel handlers dispatch to duplicate or reposition based on which mode is active.
+
+v3.69 fixed a duplicate naming edge case: previously duplicating `test-1` would produce `test-1-1`. The fix strips any trailing `-N` suffix from the source name before the increment search, so duplicating any variant always produces `test-1`, `test-2`, `test-3` etc.
 
 ---
 
@@ -243,6 +249,8 @@ Fields in order:
 | Volume | slider | 1.0 (100%) | Range 0–2.0 |
 | Visible at start | toggle | on | Sets `visible: false` when off |
 | Starts locked | toggle | off | Overrides conditions at game start |
+| Reposition | button | — | Enters placement flow to move the circle; original position restored on cancel |
+| Duplicate | button | — | Enters placement flow to place a copy; original stays in place; copy gets all properties deep-cloned and an auto-incremented name (see v3.68) |
 | Delete | button | — | Removes circle |
 
 Tapping the map outside the panel closes it (no × button).
@@ -376,7 +384,7 @@ When a `?haunt=` URL parameter is present:
 ```
 ghost-circles/
   index.html          — the entire app (engine + editor, ~3900 lines)
-  recorder.html       — standalone companion app for recording and uploading whispers (v1.0)
+  recorder.html       — standalone companion app for recording and uploading whispers (v1.1)
   manifest.json       — PWA manifest (name, icons, display mode)
   sw.js               — service worker (caching, auto-update on deploy)
   _headers            — Netlify headers (no-cache for sw.js + index.html, audio/mp4 MIME type)
@@ -495,10 +503,11 @@ Stored in `localStorage` under `gc-recorder-settings` as `{ token, owner, repo }
 
 ### Upload
 1. Filename input (bare name, e.g. `rain`) — shown with `audio/rain.m4a` path preview below
-2. GET `ghost-circles/audio/{name}.m4a` to check for an existing file and retrieve its SHA
-3. Encode blob to base64 via `FileReader.readAsDataURL`, strip the `data:…;base64,` prefix
-4. PUT to `ghost-circles/audio/{name}.m4a` — includes SHA if overwriting, omits it for new files
-5. On success: status message shown, filename input cleared, recording state reset
+2. Blocked with an error message if the filename matches a protected system file (`gpsok`, `gpslost`)
+3. GET `ghost-circles/audio/{name}.m4a` to check for an existing file and retrieve its SHA
+4. Encode blob to base64 via `FileReader.readAsDataURL`, strip the `data:…;base64,` prefix
+5. PUT to `ghost-circles/audio/{name}.m4a` — includes SHA if overwriting, omits it for new files
+6. On success: status message shown, filename input cleared, recording state reset, upload button label and state reset to "↑ Upload" (disabled until next recording)
 
 Upload path in the GitHub Contents API: `ghost-circles/audio/{name}.m4a` (i.e. the subfolder within the repo root that mirrors the deployed file structure).
 
@@ -506,8 +515,11 @@ Upload path in the GitHub Contents API: `ghost-circles/audio/{name}.m4a` (i.e. t
 - Button in the filename label row; toggles the file list open/closed
 - On first open: GET `ghost-circles/audio` directory listing via GitHub Contents API, filters to `.m4a` files, strips extensions, sorts alphabetically
 - Results cached after first fetch — list is not re-fetched on subsequent opens
-- Tapping a filename: fills the filename input with the bare name, attempts clipboard copy, shows "✓ copied" tag for 1.5 s
-- Clipboard failure (e.g. non-HTTPS context) is silently caught — the paste-to-field still works
+- Each file row shows: filename (tap to copy + load into filename field), **▶ play** button, **🗑 delete** button
+- **Filename tap**: fills the filename input with the bare name, attempts clipboard copy, shows "✓ copied" tag for 1.5 s; clipboard failure silently caught
+- **Play button**: fetches the file via GitHub Contents API (base64 decoded to ArrayBuffer), decodes via callback-form `decodeAudioData`, plays through the shared `AudioContext`. Shows ■ while playing; tap again to stop. Decoded buffers cached in `browseBufferCache` keyed by bare name. Only one file plays at a time — starting browse playback stops recording playback and vice versa.
+- **Delete button**: shows `confirm()` dialog; on confirm re-fetches the file's SHA (for safety), sends `DELETE` to GitHub Contents API, removes the row from the DOM and clears the buffer cache entry on success
+- **Protected files** (`gpsok`, `gpslost`): delete button is hidden for these entries; upload is also blocked with an error message if the filename field matches either name
 
 ### iOS Safari notes
 - `MediaRecorder` on iOS Safari requires explicit `{ mimeType: 'audio/mp4' }` to produce an audio-only container

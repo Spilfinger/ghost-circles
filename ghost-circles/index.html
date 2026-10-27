@@ -623,7 +623,7 @@
 
 
 
-    #prop-reposition-btn {
+    #prop-reposition-btn, #prop-duplicate-btn {
       display: block;
       width: 100%;
       margin-top: 16px;
@@ -1151,7 +1151,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.67</div>
+  <div id="version">v3.68</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1299,6 +1299,7 @@
       </div>
 
       <button id="prop-reposition-btn">Reposition</button>
+      <button id="prop-duplicate-btn">Duplicate</button>
 
       <div class="prop-section">Active conditions</div>
       <div id="panel-conditions-list"></div>
@@ -2440,6 +2441,7 @@
 
       let placementActive    = false;
       let repositionActive   = false; // true while the reposition preview is shown
+      let duplicateActive    = false; // true while the duplicate placement preview is shown
       let pickerActive       = false; // true while the action picker is open
       let selectedCircleName  = null;
       let overlappingCircles  = []; // circle names at the last tapped latlng that contain that point
@@ -2474,10 +2476,10 @@
       };
 
       const updatePlacementReadout = () => {
-        if (!placementActive && !repositionActive) return;
+        if (!placementActive && !repositionActive && !duplicateActive) return;
         const center = map.getCenter();
 
-        if (repositionActive) {
+        if (repositionActive || duplicateActive) {
           // Radius is fixed — resize the preview circle to match at current zoom
           const rt       = circleRuntime[selectedCircleName];
           const radiusM  = rt.def.radius;
@@ -3404,6 +3406,70 @@
         openPanel(selectedCircleName); // reopen panel — def unchanged
       };
 
+      const enterDuplicateMode = () => {
+        if (!selectedCircleName) return;
+        duplicateActive = true;
+        closePanel(); // close sheet but keep selectedCircleName and dashed outline
+        document.getElementById('placement-preview').style.display = 'flex';
+        document.getElementById('reposition-bar').style.display    = 'flex';
+        updatePlacementReadout(); // sets correct pixel size immediately
+      };
+
+      const exitDuplicateMode = () => {
+        duplicateActive = false;
+        document.getElementById('placement-preview').style.display = 'none';
+        document.getElementById('reposition-bar').style.display    = 'none';
+        const circ = document.getElementById('placement-circle');
+        circ.style.width  = '';
+        circ.style.height = '';
+      };
+
+      const confirmDuplicate = () => {
+        const sourceName = selectedCircleName;
+        const sourceDef  = circleRuntime[sourceName].def;
+        const center     = map.getCenter();
+
+        // Generate a unique name: sourceName + "-1", "-2", etc.
+        let suffix = 1;
+        while (CIRCLE_DEFS.find(d => d.name === `${sourceName}-${suffix}`)) suffix++;
+        const newName = `${sourceName}-${suffix}`;
+
+        // Deep-copy all def fields, override name and position
+        const def = Object.assign({}, sourceDef, {
+          name: newName,
+          lat:  center.lat,
+          lng:  center.lng,
+          conditions:        JSON.parse(JSON.stringify(sourceDef.conditions        || [])),
+          lockConditions:    JSON.parse(JSON.stringify(sourceDef.lockConditions    || [])),
+          visibleConditions: JSON.parse(JSON.stringify(sourceDef.visibleConditions || [])),
+          hideConditions:    JSON.parse(JSON.stringify(sourceDef.hideConditions    || [])),
+          inventoryActions:  JSON.parse(JSON.stringify(sourceDef.inventoryActions  || [])),
+          exitActions:       JSON.parse(JSON.stringify(sourceDef.exitActions       || [])),
+        });
+        CIRCLE_DEFS.push(def);
+
+        const leafletCircle = L.circle([def.lat, def.lng], {
+          radius: def.radius, color: COLOR_PASSIVE, fillColor: COLOR_PASSIVE,
+          fillOpacity: 0.15, weight: 2,
+        }).addTo(map);
+
+        circleRuntime[newName] = {
+          def, leafletCircle, state: 'passive', inRange: false, visited: 0, onMap: true,
+          activeGain: null, activeSource: null, playsRemaining: 0,
+          lockedByEnd: false, dwellTimer: null,
+        };
+
+        exitDuplicateMode();
+        addEditorToCircle(newName);
+        selectCircle(newName);
+        saveDraft();
+      };
+
+      const cancelDuplicate = () => {
+        exitDuplicateMode();
+        openPanel(selectedCircleName); // reopen panel — original unchanged
+      };
+
       const enterPlacementMode = () => {
         placementActive = true;
         document.getElementById('editor-add-btn').classList.add('active');
@@ -3615,6 +3681,7 @@
           document.getElementById('placement-preview').style.display = 'none';
         }
         if (repositionActive) exitRepositionMode();
+        if (duplicateActive)  exitDuplicateMode();
         deselectCircle();
 
         // Remove all existing circle layers and cross markers from the map
@@ -3731,7 +3798,7 @@
       CIRCLE_DEFS.forEach(def => addEditorToCircle(def.name));
 
       // Map events
-      map.on('click', () => { if (!placementActive && !repositionActive && !pickerActive) deselectCircle(); });
+      map.on('click', () => { if (!placementActive && !repositionActive && !duplicateActive && !pickerActive) deselectCircle(); });
       map.on('move zoom', updatePlacementReadout);
 
       // + button
@@ -3881,9 +3948,12 @@
       // Reposition button
       document.getElementById('prop-reposition-btn').addEventListener('click', () => enterRepositionMode());
 
-      // Reposition confirm / cancel
-      document.getElementById('reposition-confirm-btn').addEventListener('click', () => confirmReposition());
-      document.getElementById('reposition-cancel-btn').addEventListener('click',  () => cancelReposition());
+      // Duplicate button
+      document.getElementById('prop-duplicate-btn').addEventListener('click', () => enterDuplicateMode());
+
+      // Reposition / duplicate confirm / cancel (shared bar)
+      document.getElementById('reposition-confirm-btn').addEventListener('click', () => duplicateActive ? confirmDuplicate() : confirmReposition());
+      document.getElementById('reposition-cancel-btn').addEventListener('click',  () => duplicateActive ? cancelDuplicate()  : cancelReposition());
 
       // Export haunt
       document.getElementById('export-haunt-btn').addEventListener('click', () => exportHaunt());

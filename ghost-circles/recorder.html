@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Ghost Circles — Recorder v1.01</title>
+  <title>Ghost Circles — Recorder v1.1</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -226,29 +226,59 @@
     .audio-list-item {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 12px 14px;
+      gap: 4px;
+      padding: 10px 10px 10px 14px;
       border-bottom: 1px solid var(--border);
-      cursor: pointer;
       -webkit-tap-highlight-color: transparent;
-      font-family: 'Menlo', 'SF Mono', monospace;
-      font-size: 14px;
     }
 
     .audio-list-item:last-child { border-bottom: none; }
-    .audio-list-item:active { background: var(--border); }
 
-    .audio-list-item .copied-tag {
+    .audio-item-name {
+      flex: 1;
+      font-family: 'Menlo', 'SF Mono', monospace;
+      font-size: 14px;
+      cursor: pointer;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .audio-item-name:active { opacity: 0.5; }
+
+    .copied-tag {
       font-family: -apple-system, system-ui, sans-serif;
       font-size: 11px;
       color: #66bb6a;
       opacity: 0;
       transition: opacity 0.15s;
       white-space: nowrap;
-      padding-left: 8px;
+      flex-shrink: 0;
     }
 
-    .audio-list-item .copied-tag.show { opacity: 1; }
+    .copied-tag.show { opacity: 1; }
+
+    .audio-item-btns {
+      display: flex;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+
+    .audio-item-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 15px;
+      padding: 5px 7px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      border-radius: 6px;
+      line-height: 1;
+    }
+
+    .audio-item-btn:active { background: var(--border); }
+    .audio-item-play-btn.playing { color: var(--orange-hi); }
 
     /* Record button */
     #record-btn {
@@ -373,7 +403,7 @@
       <h1>Ghost Circles — Recorder</h1>
     </div>
     <div style="display:flex;align-items:center;gap:12px;">
-      <span class="version">v1.01</span>
+      <span class="version">v1.1</span>
       <button class="settings-btn" id="settings-toggle" aria-label="Settings">⚙️</button>
     </div>
   </header>
@@ -509,6 +539,11 @@
     let playBuffer    = null;
     let isPlaying     = false;
 
+    // Browse-list playback state
+    let browsePlaySource = null;
+    let browsePlayName   = null;
+    const browseBufferCache = {};
+
     function setStatus(msg, type = '') {
       statusEl.textContent = msg;
       statusEl.className   = type;
@@ -636,12 +671,46 @@
       playBtn.classList.remove('playing');
     }
 
+    function stopBrowsePlayback() {
+      if (browsePlaySource) {
+        try { browsePlaySource.stop(); } catch {}
+        browsePlaySource = null;
+      }
+      if (browsePlayName) {
+        const prevBtn = audioList.querySelector(`.audio-item-play-btn[data-name="${CSS.escape(browsePlayName)}"]`);
+        if (prevBtn) { prevBtn.textContent = '▶'; prevBtn.classList.remove('playing'); }
+        browsePlayName = null;
+      }
+    }
+
+    async function fetchAndDecodeAudio(name) {
+      if (browseBufferCache[name]) return browseBufferCache[name];
+      const { owner, repo, token } = settings;
+      const path = `ghost-circles/audio/${name}.m4a`;
+      const url  = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+      const resp = await fetch(url, {
+        headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' },
+      });
+      if (!resp.ok) throw new Error(`GitHub ${resp.status}: ${resp.statusText}`);
+      const data   = await resp.json();
+      const b64    = data.content.replace(/\n/g, '');
+      const binary = atob(b64);
+      const bytes  = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const ctx = getAudioCtx();
+      if (ctx.state === 'suspended') await ctx.resume();
+      const buffer = await new Promise((res, rej) => ctx.decodeAudioData(bytes.buffer, res, rej));
+      browseBufferCache[name] = buffer;
+      return buffer;
+    }
+
     playBtn.addEventListener('click', async () => {
       if (isPlaying) {
         stopPlayback();
         return;
       }
       if (!recordedBlob) return;
+      stopBrowsePlayback();
 
       setStatus('Loading…', 'info');
 
@@ -726,6 +795,8 @@
       return resp.json();
     }
 
+    const PROTECTED_FILES = new Set(['gpsok', 'gpslost']);
+
     uploadBtn.addEventListener('click', async () => {
       if (!recordedBlob) return;
 
@@ -733,6 +804,11 @@
       if (!name) {
         setStatus('Enter a filename before uploading.', 'error');
         filenameInput.focus();
+        return;
+      }
+
+      if (PROTECTED_FILES.has(name)) {
+        setStatus(`⚠️ ${name} is a system file and cannot be overwritten.`, 'error');
         return;
       }
 
@@ -851,31 +927,124 @@
 
         audioList.innerHTML = m4aFiles.map(name =>
           `<div class="audio-list-item" data-name="${name}">` +
-          `<span>${name}</span>` +
+          `<span class="audio-item-name" data-name="${name}">${name}</span>` +
           `<span class="copied-tag">✓ copied</span>` +
+          `<span class="audio-item-btns">` +
+          `<button class="audio-item-btn audio-item-play-btn" data-name="${name}" aria-label="Play ${name}">▶</button>` +
+          (!PROTECTED_FILES.has(name) ? `<button class="audio-item-btn audio-item-delete-btn" data-name="${name}" aria-label="Delete ${name}">🗑</button>` : '') +
+          `</span>` +
           `</div>`
         ).join('');
 
-        audioList.querySelectorAll('.audio-list-item').forEach(item => {
-          item.addEventListener('click', async () => {
-            const name = item.dataset.name;
-
-            // Paste into filename field
+        // Name tap — copy to clipboard and load into filename field
+        audioList.querySelectorAll('.audio-item-name').forEach(nameEl => {
+          nameEl.addEventListener('click', async () => {
+            const name = nameEl.dataset.name;
             filenameInput.value = name;
             filenamePreview.textContent = name;
             if (recordedBlob) uploadBtn.disabled = false;
-
-            // Copy to clipboard
-            try {
-              await navigator.clipboard.writeText(name);
-            } catch {
-              // Clipboard may fail on non-secure context — paste still works
-            }
-
-            // Show ✓ copied tag briefly
-            const tag = item.querySelector('.copied-tag');
+            try { await navigator.clipboard.writeText(name); } catch {}
+            const tag = nameEl.closest('.audio-list-item').querySelector('.copied-tag');
             tag.classList.add('show');
             setTimeout(() => tag.classList.remove('show'), 1500);
+          });
+        });
+
+        // Play buttons
+        audioList.querySelectorAll('.audio-item-play-btn').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const name = btn.dataset.name;
+
+            // Tap on currently playing item — stop it
+            if (browsePlayName === name) {
+              stopBrowsePlayback();
+              return;
+            }
+
+            // Stop any other browse or recording playback
+            stopBrowsePlayback();
+            stopPlayback();
+
+            if (!settings.token) {
+              setStatus('No GitHub token set. Tap ⚙️ to configure.', 'error');
+              return;
+            }
+
+            btn.textContent = '…';
+            btn.disabled = true;
+            try {
+              const buffer = await fetchAndDecodeAudio(name);
+              const ctx    = getAudioCtx();
+              if (ctx.state === 'suspended') await ctx.resume();
+
+              browsePlaySource = ctx.createBufferSource();
+              browsePlaySource.buffer = buffer;
+              browsePlaySource.connect(ctx.destination);
+              browsePlaySource.onended = () => {
+                browsePlaySource = null;
+                browsePlayName   = null;
+                btn.textContent = '▶';
+                btn.classList.remove('playing');
+              };
+              browsePlaySource.start();
+              browsePlayName = name;
+              btn.textContent = '■';
+              btn.classList.add('playing');
+            } catch (err) {
+              setStatus('Playback failed: ' + err.message, 'error');
+              btn.textContent = '▶';
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        });
+
+        // Delete buttons
+        audioList.querySelectorAll('.audio-item-delete-btn').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const name = btn.dataset.name;
+            if (!confirm(`Delete ${name}.m4a? This cannot be undone.`)) return;
+
+            if (!settings.token) {
+              setStatus('No GitHub token set. Tap ⚙️ to configure.', 'error');
+              return;
+            }
+
+            // Stop playback of this file if it's playing
+            if (browsePlayName === name) stopBrowsePlayback();
+
+            btn.disabled = true;
+            try {
+              const { owner, repo, token } = settings;
+              const path = `ghost-circles/audio/${name}.m4a`;
+              const sha  = await getFileSha(owner, repo, path, token);
+              if (!sha) throw new Error('File not found on GitHub');
+
+              const url  = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+              const resp = await fetch(url, {
+                method: 'DELETE',
+                headers: {
+                  Authorization: `token ${token}`,
+                  Accept: 'application/vnd.github.v3+json',
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ message: `Delete whisper: ${name}.m4a`, sha }),
+              });
+              if (!resp.ok) {
+                const errData = await resp.json().catch(() => ({}));
+                throw new Error(`GitHub DELETE ${resp.status}: ${errData.message || resp.statusText}`);
+              }
+
+              // Remove from list and cache
+              delete browseBufferCache[name];
+              btn.closest('.audio-list-item').remove();
+              setStatus(`✓ Deleted ${name}.m4a`, 'ok');
+            } catch (err) {
+              setStatus('Delete failed: ' + err.message, 'error');
+              btn.disabled = false;
+            }
           });
         });
 

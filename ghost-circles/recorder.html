@@ -776,8 +776,9 @@
         filenamePreview.textContent = 'rain';
         recordedBlob  = null;
         playBuffer    = null;
-        playBtn.disabled   = true;
-        uploadBtn.disabled = true;
+        playBtn.disabled      = true;
+        uploadBtn.disabled    = true;
+        uploadBtn.textContent = '↑ Upload';
         timerEl.textContent = '0:00';
         stopPlayback();
       } catch (err) {

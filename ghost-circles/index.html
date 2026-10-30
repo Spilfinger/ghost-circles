@@ -1151,7 +1151,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.71</div>
+  <div id="version">v3.72</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -2288,24 +2288,41 @@
             }
           } else {
             // → active immediately (dwellTime === 0, the default)
-            rt.state = 'active';
-            rt.visited += 1;
-            rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
-            if (navigator.vibrate) navigator.vibrate(200);
-            startWhisperPlayback(rt);
-            // Apply inventory actions defined on this circle
-            if (def.inventoryActions) {
-              def.inventoryActions.forEach(action => {
-                if (action.type === 'add' || action.type === 'addItem') {
-                  playerInventory[action.item] = (playerInventory[action.item] ?? 0) + 1;
-                }
-                if (action.type === 'remove' || action.type === 'removeItem') {
-                  playerInventory[action.item] = Math.max(0, (playerInventory[action.item] ?? 0) - 1);
-                }
-              });
-              renderInventory();
+            if (rt.def.playToEnd && rt.activeGain && !rt.pendingExitActions) {
+              // Re-promotion after priority demotion while the original audio session is
+              // still in flight. The player never physically left, so this is not a new
+              // visit: do not increment visited, do not fire inventory actions, do not
+              // vibrate, and do not start a new playback session. Simply restore the
+              // circle's active state and colour — the in-flight session will run to its
+              // natural end and fire lockOnEnd / exit actions / onPlayToEndLockReleased
+              // exactly as normal via the onended handler already installed by
+              // stopWhisperPlayback during the demotion.
+              // (Physical re-entry is distinguished by pendingExitActions being true;
+              // that path takes the else branch below and behaves as it does today.)
+              rt.state = 'active';
+              rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
+              debugLog(`play RESUME: ${rt.def.whisper} — re-promoted, original session still in flight`);
+              if (checkUnlocks(userLatLng)) anyUnlocked = true;
+            } else {
+              rt.state = 'active';
+              rt.visited += 1;
+              rt.leafletCircle.setStyle({ color: COLOR_ACTIVE, fillColor: COLOR_ACTIVE });
+              if (navigator.vibrate) navigator.vibrate(200);
+              startWhisperPlayback(rt);
+              // Apply inventory actions defined on this circle
+              if (def.inventoryActions) {
+                def.inventoryActions.forEach(action => {
+                  if (action.type === 'add' || action.type === 'addItem') {
+                    playerInventory[action.item] = (playerInventory[action.item] ?? 0) + 1;
+                  }
+                  if (action.type === 'remove' || action.type === 'removeItem') {
+                    playerInventory[action.item] = Math.max(0, (playerInventory[action.item] ?? 0) - 1);
+                  }
+                });
+                renderInventory();
+              }
+              if (checkUnlocks(userLatLng)) anyUnlocked = true;
             }
-            if (checkUnlocks(userLatLng)) anyUnlocked = true;
           }
         } else if (!shouldBeActive && wasActive) {
           // → passive: either the player physically exited, or a higher-priority circle

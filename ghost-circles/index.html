@@ -1151,7 +1151,7 @@
   <div id="map"></div>
   <!-- Haunt title bar — shown in play mode when a ?haunt= URL param is present -->
   <div id="haunt-title-bar"><span id="haunt-title-text"></span><button id="haunt-reset-btn" aria-label="Start over">↺</button></div>
-  <div id="version">v3.70</div>
+  <div id="version">v3.71</div>
   <div id="inventory"></div>
   <div id="debug-log">audio: —</div>
   <!-- Full-screen tap-to-start overlay (iOS audio unlock) -->
@@ -1803,19 +1803,29 @@
         return;
       }
 
-      // Global audio lock: if any playToEnd whisper is still in flight, block all new
-      // playback — including re-entry of the same circle — until it finishes naturally.
+      // Global audio lock: if any playToEnd whisper is still in flight, block new
+      // playback unless the caller has strictly higher priority than the lock holder.
+      // Equal or lower priority must wait until the lock is released naturally.
       if (playToEndLock) {
-        debugLog(`play BLOCKED: ${rt.def.whisper} — playToEnd lock held by ${playToEndLock.def.whisper}`);
-        return;
+        const lockerPriority = playToEndLock.def.priority ?? 50;
+        const callerPriority = rt.def.priority ?? 50;
+        if (callerPriority <= lockerPriority) {
+          debugLog(`play BLOCKED: ${rt.def.whisper} — playToEnd lock held by ${playToEndLock.def.whisper}`);
+          return;
+        }
+        // Strictly higher priority — allow playback to layer over the lock.
+        debugLog(`play OVERRIDE: ${rt.def.whisper} (pri ${callerPriority}) over lock held by ${playToEndLock.def.whisper} (pri ${lockerPriority})`);
       }
 
       const repeat = rt.def.repeat ?? 1;
       const label  = repeat === 0 ? '∞' : String(repeat);
       debugLog(`play: ${rt.def.whisper} ×${label} dur=${Math.round(buffer.duration)}s (ctx:${audioCtx.state})`);
 
-      // If this circle uses playToEnd, claim the global lock.
-      if (rt.def.playToEnd) {
+      // If this circle uses playToEnd, claim the global lock — but only if no lock is
+      // already held. A higher-priority override must not displace the existing holder;
+      // the original holder's onended is solely responsible for releasing the lock and
+      // firing lockOnEnd, exit actions, and onPlayToEndLockReleased.
+      if (rt.def.playToEnd && !playToEndLock) {
         playToEndLock = rt;
         debugLog(`playToEnd lock claimed: ${rt.def.whisper}`);
       }

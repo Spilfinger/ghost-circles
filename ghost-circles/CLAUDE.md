@@ -208,38 +208,59 @@ State variables: `heartbeatInterval` (setInterval handle), `gpsWasStale` (transi
 
 ## Design Patterns
 
-### Onion / bullseye
-Concentric circles at the same location with decreasing radii and increasing priority. The outermost ring plays an ambient loop while the player approaches; stepping into the inner ring (higher priority) demotes the outer to passive (audio fades), activates the inner with its own whisper. Exit actions on the inner can re-lock it and unlock a third ring, creating a staged reveal.
+### Run!
+COUNTDOWN plays a 10-second whisper with `playToEnd` + `lockOnEnd`. YES and NO start locked, both unlock when COUNTDOWN is `isActive`, both have `playToEnd` + `lockOnEnd`. YES has a `lockCondition` of `isLocked(COUNTDOWN)`; NO has a `lockCondition` of `isActive(YES)`. YES is positioned so the player reaches it first. If the player gets to YES in time, YES plays and its `isActive` locks NO. If not, COUNTDOWN's `lockOnEnd` fires first and locks YES, leaving NO to play. All three circles share equal priority.
+
+```
+COUNTDOWN — playToEnd, lockOnEnd
+YES       — startsLocked, playToEnd, lockOnEnd
+            conditions: [isActive(COUNTDOWN)]
+            lockConditions: [isLocked(COUNTDOWN)]
+NO        — startsLocked, playToEnd, lockOnEnd
+            conditions: [isActive(COUNTDOWN)]
+            lockConditions: [isActive(YES)]
+```
+
+### Onion message
+Concentric circles at the same location with decreasing radii and increasing priority. The outermost ring loops while the player approaches; stepping into the inner ring demotes it to passive (audio fades) and activates the inner whisper. Exit actions on the inner can re-lock it and unlock a third ring for a staged reveal.
 
 ```
 outer  — radius 80 m, priority 10, repeat 0 (loop)
-middle — radius 40 m, priority 20, repeat 1, playToEnd, lockOnEnd
+middle — radius 40 m, priority 20, playToEnd, lockOnEnd
          exitActions: [{ type: 'lock', target: 'outer' }]
 inner  — radius 15 m, priority 30, startsLocked
          conditions: [{ type: 'visited', circle: 'middle', minTimes: 1 }]
 ```
 
-### 2copiesKey (items as OR workaround)
-The condition system is AND-only — a circle unlocks only when ALL conditions are true. To unlock a circle when the player has visited either circle A or circle B, use an item as a flag: both A and B have `addItem: key` in their When visited actions; the target circle has `hasItem: key` as its unlock condition. First visit to either A or B drops the key and unlocks the target.
-
-### Mines! (item quantity as lives)
-Give the player a `hearts` item starting at quantity 3. "Mine" circles have `removeItem: hearts` as a When visited action and a `lockOnEnd` whisper ("Ouch!"). A "dead" circle has `itemQuantity: hearts, max: 0` as its unlock condition and plays a game-over whisper. A "you win" circle unlocks after visiting all safe targets.
-
-### InvisibleFrogs (item collection as win counter)
-Scatter hidden circles across the map, each visible only via `visibleConditions`. Each circle adds a `frog` item on visit and locks itself (`lockOnEnd`). A "win" circle has `itemQuantity: frog, min: N` as its unlock condition and plays a completion whisper when the player has collected all N frogs.
-
-### TIMER (background audio clock with priority override)
-A large circle with `playToEnd` and `lockOnEnd` plays background music that acts as a countdown clock. Hidden circles at the same location with strictly higher priority play their whispers on top without interrupting TIMER's audio (v3.71 priority override). When TIMER's audio ends naturally it locks itself (`lockOnEnd`) and can unlock a TIMESUP circle via that circle's `isLocked(TIMER)` condition.
+### Don't Dwell
+Three concentric circles test whether the player lingers. DD (priority 50, `dwellTime` 1 s) plays immediately and locks on end. SLOW (priority 60, `dwellTime` 10 s) and FAST (priority 50, `dwellTime` 10 s) both start locked and unlock once DD is visited. SLOW's higher priority lets it play over DD's `playToEndLock`; FAST waits. SLOW locks when FAST locks and vice versa, so only one outcome plays.
 
 ```
-TIMER    — large radius, priority 10, playToEnd, lockOnEnd
-CLUE-1   — same location, priority 30, startsLocked (hidden, unlocked by game logic)
-CLUE-2   — same location, priority 30, startsLocked
-TIMESUP  — any location, startsLocked
-           conditions: [{ type: "isLocked", circle: "TIMER" }]
+DD   — priority 50, dwellTime 1, playToEnd, lockOnEnd
+SLOW — priority 60, dwellTime 10, playToEnd, lockOnEnd, startsLocked
+       conditions: [visited(DD, ≥1)]    lockConditions: [isLocked(FAST)]
+FAST — priority 50, dwellTime 10, playToEnd, lockOnEnd, startsLocked
+       conditions: [visited(DD, ≥1)]    lockConditions: [isLocked(SLOW)]
 ```
 
-TIMER must have `playToEnd: true` — without it the audio stops the moment a higher-priority circle activates, breaking the clock effect.
+### Mines!
+Give the player a `hearts` item starting at quantity 3. Mine circles have `removeItem: hearts` on visit and a `lockOnEnd` whisper ("Ouch!"). A "dead" circle has `itemQuantity: hearts, max: 0` as its unlock condition and plays a game-over whisper. A "you win" circle unlocks after visiting all safe targets.
+
+### TIMER
+A large circle with `playToEnd` + `lockOnEnd` plays background audio as a clock. Higher-priority circles at the same location play on top without interrupting it (v3.71 priority override). When TIMER's audio ends it locks itself and unlocks TIMESUP via `isLocked(TIMER)`. TIMER must have `playToEnd: true` — without it, a higher-priority circle activating stops the clock audio.
+
+```
+TIMER   — large radius, priority 10, playToEnd, lockOnEnd
+CLUE-1  — same location, priority 30, startsLocked
+TIMESUP — startsLocked,  conditions: [isLocked(TIMER)]
+```
+
+---
+
+## Techniques
+
+### 2copiesKey (OR condition workaround)
+The condition system is AND-only. To unlock a circle when the player has visited either A or B, give both A and B an `addItem: key` action; the target circle uses `hasItem: key` as its unlock condition. First visit to either drops the key.
 
 ---
 

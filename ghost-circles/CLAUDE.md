@@ -4,35 +4,41 @@
 
 Ghost Circles is a location-based Progressive Web App (PWA) for iPhone. Players walk around in the real world and encounter invisible "ghost circles" — geofenced areas anchored to GPS coordinates. When a player enters a circle, the app triggers a sensory response: a sound (called a whisper), a haptic vibration, and a visual colour change on the map. The concept is an immersive, ambient experience somewhere between a walking audio tour and a ghost hunt.
 
-## Current State (v3.69)
+## Current State (v3.72)
 
 The engine and editor are feature-complete for single-haunt, GPS-driven experiences with a full items system, time/date-aware conditions, and player progress persistence. Play state is automatically saved to localStorage after every circle visit and inventory change, keyed by haunt id. Players resume exactly where they left off via the Continue button on the start screen. A ↺ button in the haunt title bar lets players start over with a confirmation prompt.
 
-v3.52–v3.53 added a GPS heartbeat system (play mode only): a quiet audio pulse every 10 seconds with a double ripple CSS animation on the player dot, a GPS-lost warning after 3 seconds of signal dropout, and automatic heartbeat resume on recovery.
+v3.52–v3.53: GPS heartbeat added (play mode only) — 10 s audio pulse, double ripple animation on player dot, GPS-lost warning after 3 s dropout, auto-resume on recovery.
 
-v3.54–v3.55 improved the editor panel: circle name is now a bold headline at the top, Whisper is the second field, the × close button is removed, and a → navigator lets authors cycle through overlapping circles at a tapped map location (replacing the "Hide in editor" toggle).
+v3.54–v3.55: Editor panel improved — circle name as bold headline, Whisper as second field, × button removed, → navigator for cycling overlapping circles at a tapped location.
 
-v3.56 fixed lockConditions not evaluating immediately when a circle locks via lockOnEnd or an exit action — a new `reEvaluateLockConditions()` function runs a GPS-independent sweep after any lock event.
+v3.56: Fixed lockConditions not evaluating immediately on lockOnEnd/exit-action lock — added `reEvaluateLockConditions()` for a GPS-independent sweep after any lock event.
 
-v3.57 added dwell time: a per-circle `dwellTime` field (integer seconds, default 0) that requires the player to remain inside a circle for the specified duration before it activates. Zero is a no-op — all existing haunts are unaffected.
+v3.57: Added `dwellTime` per circle (integer seconds, default 0) — player must remain inside for N seconds before activation; zero is a no-op.
 
-v3.58 introduced `recorder.html`, a standalone companion app for recording and uploading `.m4a` whisper files directly from an iPhone to the GitHub repo via the GitHub Contents API.
+v3.58: Added `recorder.html` — standalone iPhone companion app for recording and uploading `.m4a` whispers directly to the GitHub repo via the GitHub Contents API.
 
-v3.59 fixed two sequencing bugs involving `playToEnd` + `lockOnEnd`. The correct order of operations when a playToEnd audio ends naturally is now: (1) release `playToEndLock`, (2) `fireExitActions`, (3) `onPlayToEndLockReleased` — starts queued whispers before lockOnEnd fires, (4) apply `lockOnEnd`, (5) `reEvaluateLockConditions`, (6) `checkUnlocks(lastKnownLatLng)`, (7) `checkProximity`. This fixed two bugs: a YES-type circle (unlocks when countdown is active, locks when countdown is locked) now gets its whisper started before lockOnEnd locks it via its lockCondition; and a NO-type circle (unlocks when countdown is locked) now unlocks immediately when lockOnEnd fires rather than waiting for the next GPS tick. Both `playNextInSequence` natural completion and `stopWhisperPlayback` exit-path `onended` use this sequence. `onPlayToEndLockReleased` no longer calls `checkProximity` internally — callers are responsible for the full sequence.
+v3.59: Fixed two `playToEnd` + `lockOnEnd` sequencing bugs — established the correct 7-step completion sequence (release lock → fireExitActions → onPlayToEndLockReleased → lockOnEnd → reEvaluateLockConditions → checkUnlocks → checkProximity).
 
-v3.60–v3.61 fixed a double-play bug introduced by v3.59: when a circle with `playToEnd` + `lockOnEnd` completed naturally while the player was still inside, `onPlayToEndLockReleased` would re-start that circle's whisper because its `lockedByEnd` flag had not been set yet at the moment of the scan (lockOnEnd runs after the scan). Fixed by passing `rt` as a parameter to `onPlayToEndLockReleased(rt)` and excluding `rt` from the scan by object identity (`crt !== rt`).
+v3.60–v3.61: Fixed double-play bug from v3.59 — `onPlayToEndLockReleased(rt)` now excludes `rt` by identity (`crt !== rt`) so the completing circle is never re-started.
 
-v3.62–v3.64 replaced the plain "Tap to Start" overlay in play mode with a proper start screen. When a haunt is loaded the overlay shows the haunt title prominently, with "Begin" and "Continue" buttons below it (Continue only shown when a save exists for that haunt ID). Both buttons satisfy the iOS audio unlock gesture requirement — no separate tap needed. Begin clears any existing localStorage save and starts fresh; Continue applies the saved state then starts. Editor mode and non-haunt mode are unchanged. Save application is now deferred: the save is parsed at load time into `_pendingSave` and applied to `circleRuntime` only when Continue is tapped; Begin discards it. `applyPlayState()` is the function that applies `_pendingSave`. The buttons are styled as circles (`border-radius: 50%`, 140×140px) and positioned in a Venn diagram composition — Begin lower-left, Continue upper-right, with centers ~134px apart so the circles just barely overlap (~6px).
+v3.62–v3.64: Replaced "Tap to Start" overlay with a start screen — haunt title, Begin (lower-left) and Continue (upper-right) buttons in a Venn diagram layout; save deferred to `_pendingSave`, applied by `applyPlayState()` on Continue.
 
-v3.65 fixed a circle placement offset bug in the editor. The `#placement-preview` container holds the crosshair circle and a coordinate readout below it in a flex column. The previous CSS used `transform: translate(-50%, -50%)` which centered the entire container (circle + readout, ~198px tall) at the viewport midpoint — placing the crosshair's center ~19px above the true map center. `map.getCenter()` returns the viewport midpoint, so confirmed placements landed that distance south of the crosshair. Fixed by changing to `top: calc(50% - 80px)` (80px = half the circle's 160px height), which anchors the circle's center exactly at the viewport midpoint regardless of the readout's height.
+v3.65: Fixed circle placement offset — crosshair was ~19px above true map center due to `transform: translate(-50%,-50%)` on the container; fixed with `top: calc(50% - 80px)`.
 
-v3.66 added `user-scalable=no` and `maximum-scale=1` to the viewport meta tag. This prevents iOS Safari from zooming the entire browser page when the user pinches, which was causing editor UI elements to be pushed off screen. Leaflet intercepts pinch gestures on the map element before they reach the browser, so its own pinch-to-zoom continues to work normally.
+v3.66: Added `user-scalable=no`/`maximum-scale=1` to viewport — prevents iOS Safari page zoom on pinch; Leaflet's own pinch-to-zoom is unaffected.
 
-v3.67 renamed the start screen buttons from "New Game"/"Resume" to "Begin"/"Continue" — neutral labels that work for game and non-game haunts alike.
+v3.67: Renamed start screen buttons from "New Game"/"Resume" to "Begin"/"Continue" — neutral labels that suit non-game haunts.
 
-v3.68 added a **Duplicate** button to the circle properties panel, placed directly beneath the Reposition button. Tapping it starts the same placement flow as Reposition — a draggable circle of the same size appears for positioning — but the original circle stays in place. On confirm, a new circle is created as a deep copy of all properties (conditions, actions, arrays all cloned), with the name auto-incremented: the base name is derived by stripping any trailing `-N` suffix from the source name, then appending `-1`, `-2`, `-3` etc. until the name is unique. The properties panel switches to show the new copy. Uses the shared reposition-bar (Confirm position / Cancel); the confirm and cancel handlers dispatch to duplicate or reposition based on which mode is active.
+v3.68: Added **Duplicate** button to the circle properties panel (beneath Reposition) — same placement flow as Reposition but the original stays in place; copy gets all properties deep-cloned and an auto-incremented name (base name with `-N` suffix stripped first, then `-1`, `-2`, … appended until unique).
 
-v3.69 fixed a duplicate naming edge case: previously duplicating `test-1` would produce `test-1-1`. The fix strips any trailing `-N` suffix from the source name before the increment search, so duplicating any variant always produces `test-1`, `test-2`, `test-3` etc.
+v3.69: Fixed duplicate naming edge case — stripping the trailing `-N` suffix from the source name before searching for a unique suffix prevents `test-1-1` chains.
+
+v3.70: Fixed dwell time — after a dwell timer fires and activates a circle, `checkUnlocks` now runs explicitly before `checkProximity` so circles that unlock on `visited` or `isActive` for that circle unlock immediately (the normal GPS path calls `checkUnlocks` inside Pass 3 during the passive→active transition, but the dwell timer fires outside Pass 3, so it was skipped).
+
+v3.71: The `playToEndLock` can now be overridden by a circle with **strictly higher** priority than the lock holder — it plays its whisper layered on top without claiming the lock; the original holder still releases it at its natural end and fires lockOnEnd, exit actions, and `onPlayToEndLockReleased` exactly as before. Equal or lower priority circles still wait (the RUN! countdown pattern relies on this). Debug log: `play OVERRIDE: <name> (pri N) over lock held by <name> (pri N)`.
+
+v3.72: A `playToEnd` circle that is priority-demoted while its audio is still playing, then re-promoted before the audio ends, now restores to active without starting a new session — it does not increment `visited`, does not vibrate, and does not restart the whisper from the beginning. The original session runs to its natural end and fires the full lock-release sequence as normal. Guard condition: `rt.def.playToEnd && rt.activeGain && !rt.pendingExitActions` — the `!pendingExitActions` term excludes physical re-entry (player left and came back), which still increments `visited` and fires inventory actions as before. Debug log: `play RESUME: <name> — re-promoted, original session still in flight`.
 
 ---
 
@@ -92,7 +98,9 @@ Evaluated in **Pass 5** on every GPS tick. All engine logic (state machine, audi
 ### Play to end
 `playToEnd` boolean (default `false`). When true, if the player exits while a whisper is playing, the audio is not faded — it continues to its natural end. Incompatible with loop (`repeat: 0`); the editor greys it out in that case.
 
-A global lock (`playToEndLock`) is held for the duration. While the lock is held, no other whisper (including re-entry of the same circle) can start. The lock is released when the audio ends naturally.
+A global lock (`playToEndLock`) is held for the duration. While the lock is held, circles with **equal or lower** priority than the lock holder are blocked from starting their whispers and must wait. A circle with **strictly higher** priority may play its whisper immediately, layered on top, without claiming or displacing the lock — the original holder still releases it when its audio ends naturally. The lock is always released by the holder's own `onended` handler via the identity check `if (playToEndLock === rt)`.
+
+**Priority demotion while audio is in flight:** if a `playToEnd` circle is demoted to passive by a higher-priority circle but its audio is still playing, and it is subsequently re-promoted before the audio ends, the engine restores its active state without starting a new session — `visited` is not incremented, inventory actions do not fire again, and the whisper does not restart from the beginning. The in-flight session runs to its natural end and fires the full lock-release sequence (lockOnEnd, exit actions, `onPlayToEndLockReleased`, etc.) as normal. This guard only applies when the player never physically left (`!rt.pendingExitActions`); physical re-entry always starts a fresh activation.
 
 ### Lock on end
 `lockOnEnd` boolean (default `false`). When true, the circle locks itself automatically when its whisper finishes — whether the player stayed inside and the audio completed naturally, or whether `playToEnd` let the audio run after exit. Sets `rt.lockedByEnd = true` on the runtime object.
@@ -219,6 +227,19 @@ Give the player a `hearts` item starting at quantity 3. "Mine" circles have `rem
 
 ### InvisibleFrogs (item collection as win counter)
 Scatter hidden circles across the map, each visible only via `visibleConditions`. Each circle adds a `frog` item on visit and locks itself (`lockOnEnd`). A "win" circle has `itemQuantity: frog, min: N` as its unlock condition and plays a completion whisper when the player has collected all N frogs.
+
+### TIMER (background audio clock with priority override)
+A large circle with `playToEnd` and `lockOnEnd` plays background music that acts as a countdown clock. Hidden circles at the same location with strictly higher priority play their whispers on top without interrupting TIMER's audio (v3.71 priority override). When TIMER's audio ends naturally it locks itself (`lockOnEnd`) and can unlock a TIMESUP circle via that circle's `isLocked(TIMER)` condition.
+
+```
+TIMER    — large radius, priority 10, playToEnd, lockOnEnd
+CLUE-1   — same location, priority 30, startsLocked (hidden, unlocked by game logic)
+CLUE-2   — same location, priority 30, startsLocked
+TIMESUP  — any location, startsLocked
+           conditions: [{ type: "isLocked", circle: "TIMER" }]
+```
+
+TIMER must have `playToEnd: true` — without it the audio stops the moment a higher-priority circle activates, breaking the clock effect.
 
 ---
 
@@ -443,7 +464,7 @@ ghost-circles/
 - `checkUnlocks(userLatLng)` — promotes locked circles whose conditions are met; skips `lockedByEnd` circles unconditionally; returns true if anything promoted
 - `checkProximity(lat, lng)` — five-pass algorithm: (1) update inRange → (2) find maxPriority → (3) resolve transitions + inventoryActions + checkUnlocks + exitActions → recurse if unlocks → (4) re-lock/re-unlock (skips lockedByEnd) → (5) update dynamic map visibility
 - `reEvaluateLockConditions()` — GPS-independent sweep: locks all passive/active circles whose `lockConditions` are currently met; loops until stable so lock chains resolve in one call (A locks → B's isLocked(A) fires → B locks → …). Called from `fireExitActions` and from both natural-completion `onended` handlers after lockOnEnd is applied.
-- `startWhisperPlayback(rt)` — checks playToEndLock, claims it if playToEnd, starts audio per repeat setting
+- `startWhisperPlayback(rt)` — checks `playToEndLock`; blocks if caller priority ≤ lock-holder priority; allows strictly higher priority to play over the lock without claiming it; claims the lock only if `playToEnd` and no lock is currently held; starts audio per repeat setting
 - `playNextInSequence(rt, gain)` — chains sequential plays via `onended`; on natural completion: releases lock, fires `fireExitActions`, calls `onPlayToEndLockReleased(rt)`, applies lockOnEnd, then calls `reEvaluateLockConditions` + `checkUnlocks` + `checkProximity`
 - `stopWhisperPlayback(rt)` — if playToEnd: lets audio run to end, sets `pendingExitActions` flag on exit; in `onended`: releases lock, fires deferred `fireExitActions`, calls `onPlayToEndLockReleased(rt)`, applies lockOnEnd, then calls `reEvaluateLockConditions` + `checkUnlocks` + `checkProximity`; otherwise fades over 1s and stops
 - `fireExitActions(rt)` — executes all `exitActions` on the circle's def; handles lock/unlock/show/hide/addItem/removeItem; resets `rt.pendingExitActions`; calls `reEvaluateLockConditions()` at the end
@@ -542,6 +563,8 @@ Append `?debug=true` to the URL to show the debug overlay (top-left corner). Rol
 - Buffer loads: `buf ok: <name> (<s>)` / `buf ERR: <name> — <reason>`
 - Whisper play: `play: <name> ×<N> dur=<s> (ctx:<state>)`
 - Play blocked: `play BLOCKED: <name> — playToEnd lock held by <name>`
+- Play override: `play OVERRIDE: <name> (pri N) over lock held by <name> (pri N)`
+- Play resume: `play RESUME: <name> — re-promoted, original session still in flight`
 - Play skipped: `play SKIP: <name> — no buffer (keys: <list>)`
 - Lock claimed/released: `playToEnd lock claimed/released: <name>`
 - Lock on end: `lockedByEnd: <name>`
